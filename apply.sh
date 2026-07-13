@@ -22,6 +22,7 @@ set -uo pipefail
 OVERLAY_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PERSONA_FILE="$OVERLAY_DIR/persona/persona-block.md"
 RUBRIC_FILE="$OVERLAY_DIR/deltas/rubric-tdd.md"
+PIMODEL_FILE="$OVERLAY_DIR/deltas/pi-model-agnostic.md"
 STATE_JSON="$HOME/.gentle-ai/state.json"
 BACKUP_ROOT="$OVERLAY_DIR/backups/$(date +%Y%m%d-%H%M%S)"
 
@@ -46,6 +47,9 @@ CHANGED=0
 #                    -> the loose-paragraph shape is the only one that fits
 #   rubric-json      opencode.json -> .agent["gentle-orchestrator"].prompt (carries the list)
 #   rubric-none      host has no strict-TDD forwarding section; nothing to inject
+#   pi-models        pi's sdd-model-assignments block -> host-agnostic `inherit`
+#                    (pi routes phases via ~/.pi/gentle-ai/models.json; the Claude
+#                     aliases gentle-ai renders there are unresolvable). pi ONLY.
 # ---------------------------------------------------------------------------
 host_rows() {
   cat <<'ROWS'
@@ -54,6 +58,7 @@ claude-code|persona-split|.claude/output-styles/neutral.md
 claude-code|rubric-prose|.claude/skills/_shared/sdd-orchestrator-workflow.md
 pi|persona-marked|.pi/agent/APPEND_SYSTEM.md
 pi|rubric-list|.pi/agent/APPEND_SYSTEM.md
+pi|pi-models|.pi/agent/APPEND_SYSTEM.md
 opencode|persona-marked|.config/opencode/AGENTS.md
 opencode|rubric-json|.config/opencode/opencode.json
 codex|persona-headed|.codex/AGENTS.md
@@ -163,17 +168,20 @@ persona_apply() {
 # already-applied predicate that could drift from what the transform does.
 # ---------------------------------------------------------------------------
 
-[ -r "$PERSONA_FILE" ] || { echo "FATAL: missing $PERSONA_FILE" >&2; exit 1; }
-[ -r "$RUBRIC_FILE" ]  || { echo "FATAL: missing $RUBRIC_FILE" >&2; exit 1; }
+[ -r "$PERSONA_FILE" ]  || { echo "FATAL: missing $PERSONA_FILE" >&2; exit 1; }
+[ -r "$RUBRIC_FILE" ]   || { echo "FATAL: missing $RUBRIC_FILE" >&2; exit 1; }
+[ -r "$PIMODEL_FILE" ]  || { echo "FATAL: missing $PIMODEL_FILE" >&2; exit 1; }
 
-# Pull one <!-- shape:NAME --> ... <!-- /shape:NAME --> block out of the delta file.
-extract_shape() {
-  awk -v tag_open="<!-- shape:$1 -->" -v tag_close="<!-- /shape:$1 -->" '
+# Pull one <!-- shape:NAME --> ... <!-- /shape:NAME --> block out of a delta file.
+extract_shape_from() {
+  awk -v tag_open="<!-- shape:$2 -->" -v tag_close="<!-- /shape:$2 -->" '
     $0 == tag_close { inside = 0 }
     inside          { print }
     $0 == tag_open  { inside = 1 }
-  ' "$RUBRIC_FILE"
+  ' "$1"
 }
+
+extract_shape() { extract_shape_from "$RUBRIC_FILE" "$1"; }
 
 RUBRIC_ITEM4="$(extract_shape list-item)"
 RUBRIC_PROSE="$(extract_shape prose)"
@@ -257,6 +265,73 @@ rubric_transform_prose() {
       exit 0
     }
   '
+}
+
+# ---------------------------------------------------------------------------
+# pi model-agnostic assignments.
+#
+# gentle-ai renders the SDD model-assignments table with CLAUDE aliases (opus /
+# sonnet / haiku) into every host, including pi. pi cannot resolve those aliases:
+# its phase routing lives in ~/.pi/gentle-ai/models.json, which maps every phase
+# to a concrete provider model. The rendered table therefore tells pi's
+# orchestrator to pass aliases that do not exist in pi, contradicting pi's own
+# authoritative routing.
+#
+# This delta rewrites pi's block so the Default Model column reads `inherit` and
+# the prose defers to models.json. Applied to pi ONLY -- claude-code's table is
+# rendered from state.json `claude_phase_assignments` and is correct there.
+# ---------------------------------------------------------------------------
+PI_BLOCK="$(extract_shape_from "$PIMODEL_FILE" block)"
+PI_SKILLS="$(extract_shape_from "$PIMODEL_FILE" skills-sentence)"
+
+[ -n "$PI_BLOCK" ] && [ -n "$PI_SKILLS" ] || {
+  echo "FATAL: $PIMODEL_FILE is missing one of the shape blocks" >&2; exit 1; }
+
+PI_MARK_OPEN='<!-- gentle-ai:sdd-model-assignments -->'
+PI_MARK_CLOSE='<!-- /gentle-ai:sdd-model-assignments -->'
+# The one sentence outside the block that tells the orchestrator to cache and pass
+# `phase -> alias`. Matched by prefix; replaced wholesale.
+PI_SKILLS_ANCHOR='The orchestrator resolves skills from the registry ONCE'
+
+# Pure + idempotent: replaces the marker-delimited body and the alias sentence.
+# Exits 1 if either marker is gone.
+pimodel_transform() {
+  BLOCK="$PI_BLOCK" SKILLS="$PI_SKILLS" \
+  M_OPEN="$PI_MARK_OPEN" M_CLOSE="$PI_MARK_CLOSE" S_ANCHOR="$PI_SKILLS_ANCHOR" \
+  awk '
+    BEGIN {
+      block = ENVIRON["BLOCK"]; skills = ENVIRON["SKILLS"]
+      m_open = ENVIRON["M_OPEN"]; m_close = ENVIRON["M_CLOSE"]; s_anchor = ENVIRON["S_ANCHOR"]
+    }
+    { line[NR] = $0 }
+    END {
+      n = NR
+      for (i = 1; i <= n; i++) {
+        if (!o && line[i] == m_open)  o = i
+        if (o && !c && line[i] == m_close) c = i
+      }
+      if (!o || !c) exit 1                                   # template changed -> refuse
+
+      for (i = 1; i <= n; i++) {
+        if (i > o && i < c) continue                         # drop the old body
+        if (i == c) { print block; print "" }                # canonical body, then the marker
+        print (index(line[i], s_anchor) == 1) ? skills : line[i]
+      }
+      exit 0
+    }
+  '
+}
+
+pimodel_apply() {
+  local file="$1" tmp
+  tmp="$(mktemp)"
+  if ! pimodel_transform < "$file" > "$tmp"; then rm -f "$tmp"; return 3; fi
+  if cmp -s "$tmp" "$file"; then rm -f "$tmp"; return 1; fi   # output == input
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f "$tmp"; return 0; fi
+  backup "$file"
+  cat "$tmp" > "$file"   # preserve inode/permissions
+  rm -f "$tmp"
+  return 0
 }
 
 # rc 0 = written/pending, 1 = already applied, 3 = anchor gone.
@@ -366,6 +441,15 @@ for host in $HOSTS; do
       rubric-none)
         # This host's template has no strict-TDD forwarding section at all.
         report "n/a" "rubric-tdd" "$short (no strict-TDD section in template)"
+        ;;
+      pi-models)
+        pimodel_apply "$file"; rc=$?
+        case "$rc" in
+          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "pi-models" "$short"; PENDING=1
+             else report "applied" "pi-models" "$short"; CHANGED=1; fi ;;
+          1) report "already-applied" "pi-models" "$short" ;;
+          *) report "ANCHOR-NOT-FOUND" "pi-models" "$short"; MISSING_ANCHOR=1 ;;
+        esac
         ;;
     esac
   done <<EOF

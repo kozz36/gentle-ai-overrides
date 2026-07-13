@@ -100,6 +100,39 @@ The canonical wording of `list-item` and `cache-sentence` comes from
 `~/.claude/claude-bk-03-07.md` (the "Strict TDD Forwarding (MANDATORY)" section),
 which is the source of truth.
 
+### 3. `deltas/pi-model-agnostic.md` — pi's Model Assignments, made host-agnostic
+
+gentle-ai renders the SDD **Model Assignments** table with *Claude* aliases —
+`opus` / `sonnet` / `haiku` — into every host, pi included, together with the prose
+*"If you lack access to the assigned model, substitute `sonnet` and continue."*
+
+That is wrong for pi. pi has its own authoritative phase routing in
+`~/.pi/gentle-ai/models.json`, which maps every phase (`sdd-*`, `jd-*`, `review-*`,
+`gentle-ai-worker`) to a concrete `openai-codex/gpt-5.6-{luna,terra,sol}` model plus a
+thinking level. **pi cannot resolve `opus`/`sonnet`/`haiku` at all** — so the rendered
+table tells pi's orchestrator to pass aliases that do not exist there, contradicting
+pi's own routing.
+
+The delta rewrites pi's block so that:
+
+- every `Default Model` cell reads `inherit`;
+- the prose defers to `models.json` and states the orchestrator MUST NOT pass an
+  explicit model alias — phases inherit;
+- the `substitute sonnet` fallback is gone;
+- the Phase and Reason columns, the heading, and the
+  `<!-- gentle-ai:sdd-model-assignments -->` markers are preserved intact.
+
+One sentence *outside* the block also had to change. gentle-ai emits:
+
+> It also reads the Model Assignments table once per session and caches
+> `phase → alias` for SDD/Judgment-Day Agent calls only.
+
+That is the only directive actually telling pi to pass aliases, so the delta replaces
+it with the inherit-based wording. (There is **no** literal "Agent tool calls … MUST
+include `model`" gate in pi's file; this sentence is the real gate.)
+
+**pi only.** See the scope note below.
+
 ## Host -> file -> shape map
 
 | Host | File | Persona | RUBRIC TDD |
@@ -145,11 +178,30 @@ reshuffle silently eating unrelated content.
 If gentle-ai changes a template, the matching anchor disappears, `apply.sh` reports
 `ANCHOR-NOT-FOUND` and exits `1` instead of guessing.
 
+## Model-assignments scope: which hosts are touched, and why
+
+The overlay rewrites the model-assignments block **for `pi` only**. State of every host:
+
+| Host | Model-assignments block | Overlay action |
+| --- | --- | --- |
+| `pi` | Claude aliases, but pi routes via `~/.pi/gentle-ai/models.json` — **contradiction** | **rewritten to `inherit`** |
+| `claude-code` | Claude aliases, rendered from `claude_phase_assignments` in `~/.gentle-ai/state.json` — **correct**, they are real aliases the user chose | untouched |
+| `opencode` | **already host-appropriate**: gentle-ai emits a block deferring to `agent.<phase>.model` in `opencode.json` (which routes to `ollama/*`). No aliases. | untouched |
+| `cursor` | Claude aliases | untouched — reported only |
+| `vscode-copilot` | Claude aliases | untouched — reported only |
+| `antigravity` | Claude aliases | untouched — reported only |
+| `codex` | no block | — |
+
+cursor / vscode-copilot / antigravity carry the same Claude-alias table as pi did. They
+have **no competing model-routing config of their own**, so there is no contradiction of
+pi's kind to resolve — the aliases are simply meaningless on a non-Claude host. Left
+alone deliberately; revisit only if those hosts gain their own routing.
+
 ## Deliberately NOT in this overlay
 
-- **The SDD model-assignments table** (`<!-- gentle-ai:sdd-model-assignments -->`)
-  is rendered from `claude_phase_assignments` in `~/.gentle-ai/state.json`. It is
-  installer-managed; edit it through gentle-ai, not here.
+- **The SDD model-assignments table** in hosts other than `pi` — see the scope table
+  above. For `claude-code` it is rendered from `claude_phase_assignments` in
+  `~/.gentle-ai/state.json` and is correct; edit it through gentle-ai, not here.
 - **The CodeGraph guidance block** (`<!-- gentle-ai:codegraph-guidance -->`) is
   emitted by the `codegraph` community-tool component. Also installer-managed.
 
