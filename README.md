@@ -63,27 +63,64 @@ Because the persona body gentle-ai renders is **byte-identical across all old-sh
 hosts**, the overlay ships one canonical block and stamps it into each of them.
 This is a whole-block replacement, not a bullet-by-bullet merge.
 
-### 2. `deltas/rubric-tdd.md` — the RUBRIC TDD paragraph
+### 2. `deltas/rubric-tdd.md` — the RUBRIC TDD condition
 
-One paragraph appended to the SDD orchestrator's **Strict TDD Forwarding** section.
-It tells the orchestrator that when a project's `sdd-init` defines a per-work-type
-test rubric, it must classify the change by its diff signature and forward the
-matching rubric row into the sub-agent prompt — including when `strict_tdd` is
-`false`, since a rubric row can demand test-first independently of the binary flag.
+The rubric condition tells the orchestrator that when a project's `sdd-init` defines
+a per-work-type test rubric, it must classify the change by its diff signature and
+forward the matching rubric row into the sub-agent prompt — including when
+`strict_tdd` is `false`, since a rubric row can demand test-first independently of
+the binary flag.
+
+**It is item 4 of the MANDATORY numbered list**, not a paragraph after it:
+
+```
+#### Strict TDD Forwarding (MANDATORY)
+
+1. Search for testing capabilities: ...
+2. If the result contains `strict_tdd: true`: ...
+3. If the search fails or `strict_tdd` is not found, ...
+4. **Additional condition — per-work-type rubric (project-generated, ...).**
+   If the init defines a per-work-type test rubric, classify the change ...
+```
+
+Why the shape matters: a loose paragraph trailing the list can be read as optional
+commentary, whereas item 4 of a list whose heading says **(MANDATORY)** inherits that
+force. The overlay originally injected the loose-paragraph form; `apply.sh` now
+**migrates** it to the numbered form wherever it finds it.
+
+The delta file carries three blocks, each fenced by `<!-- shape:NAME -->` markers:
+
+| Block | Used for |
+| --- | --- |
+| `list-item` | the canonical item 4 — every host that has the numbered list |
+| `prose` | the condensed paragraph — the one host that has no list (see below) |
+| `cache-sentence` | the richer "resolves the rubric + `strict_tdd` ONCE per session … re-classifying each apply slice by its diff signature" sentence, which replaces the weaker "resolves TDD status ONCE per session" wherever that sentence exists |
+
+The canonical wording of `list-item` and `cache-sentence` comes from
+`~/.claude/claude-bk-03-07.md` (the "Strict TDD Forwarding (MANDATORY)" section),
+which is the source of truth.
 
 ## Host -> file -> shape map
 
 | Host | File | Persona | RUBRIC TDD |
 | --- | --- | --- | --- |
 | `claude-code` | `~/.claude/CLAUDE.md`, `~/.claude/output-styles/neutral.md` | split shape, user-managed — **not touched** | — |
-| `claude-code` | `~/.claude/skills/_shared/sdd-orchestrator-workflow.md` | — | already applied |
-| `pi` | `~/.pi/agent/APPEND_SYSTEM.md` | marker block | yes (same file) |
+| `claude-code` | `~/.claude/skills/_shared/sdd-orchestrator-workflow.md` | — | **prose** — this surface has no numbered list |
+| `pi` | `~/.pi/agent/APPEND_SYSTEM.md` | marker block | item 4 (same file) |
 | `opencode` | `~/.config/opencode/AGENTS.md` | marker block | — |
-| `opencode` | `~/.config/opencode/opencode.json` | — | yes, via `jq` into `.agent["gentle-orchestrator"].prompt` |
+| `opencode` | `~/.config/opencode/opencode.json` | — | item 4, via `jq` into `.agent["gentle-orchestrator"].prompt` |
 | `codex` | `~/.codex/AGENTS.md` | heading-bounded | **n/a** — template has no strict-TDD section |
-| `cursor` | `~/.cursor/rules/gentle-ai.mdc` | heading-bounded | yes (same file) |
-| `vscode-copilot` | `~/.config/Code/User/prompts/gentle-ai.instructions.md` | heading-bounded | yes (same file) |
-| `antigravity` | `~/.gemini/GEMINI.md` | marker block | yes (same file) |
+| `cursor` | `~/.cursor/rules/gentle-ai.mdc` | heading-bounded | item 4 (same file) |
+| `vscode-copilot` | `~/.config/Code/User/prompts/gentle-ai.instructions.md` | heading-bounded | item 4 (same file) |
+| `antigravity` | `~/.gemini/GEMINI.md` | marker block | item 4 (same file) |
+
+### Why claude-code keeps the prose shape
+
+`sdd-orchestrator-workflow.md` is a *condensed* surface: its Strict TDD Forwarding
+section is a single sentence of prose, with no numbered list to be item 4 *of*.
+Promoting the rubric there would mean inventing a list that gentle-ai does not emit.
+The loose-paragraph shape is the only one that fits, so that host is deliberately
+left in prose form and `apply.sh` reports it as `already-applied`.
 
 Two persona shapes exist in the wild:
 

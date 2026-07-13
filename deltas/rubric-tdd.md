@@ -1,1 +1,17 @@
+<!-- shape:list-item -->
+4. **Additional condition — per-work-type rubric (project-generated, this file stays project-agnostic).**
+   If the init defines a per-work-type test rubric, classify the change by its diff signature and forward
+   the MATCHING rubric row into the sub-agent prompt the SAME way — e.g. `"RUBRIC TDD: this change is
+   <type> → <the rubric's instruction for that type>"`. The rubric is the project's own (each project
+   generates it from its independent conditions in its init); do NOT hardcode any project's signatures or
+   thresholds here. A rubric row may require test-first for specific change types independently of the
+   binary — so this condition applies even when `strict_tdd` is false.
+<!-- /shape:list-item -->
+
+<!-- shape:prose -->
 If the init defines a per-work-type test rubric, classify the change by its diff signature and forward the MATCHING rubric row into the sub-agent prompt the SAME way — e.g. `"RUBRIC TDD: this change is <type> → <the rubric's instruction for that type>"`. The rubric is the project's own (each project generates it from its independent conditions in its init); do NOT hardcode any project's signatures or thresholds here. A rubric row may require test-first for specific change types independently of the binary — so this condition applies even when `strict_tdd` is false.
+<!-- /shape:prose -->
+
+<!-- shape:cache-sentence -->
+The orchestrator resolves the rubric + `strict_tdd` ONCE per session (at first apply/verify launch) and caches it, re-classifying each apply slice by its diff signature.
+<!-- /shape:cache-sentence -->

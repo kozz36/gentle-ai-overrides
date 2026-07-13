@@ -41,27 +41,29 @@ CHANGED=0
 #   persona-marked   persona block delimited by <!-- gentle-ai:persona --> markers
 #   persona-headed   persona block with no markers; bounded by "## Rules" .. next <!-- gentle-ai: marker
 #   persona-split    claude-code's newer split shape (CLAUDE.md + output-styles); user-managed, never touched
-#   rubric-md        markdown SDD-orchestrator surface carrying the strict-TDD forwarding section
-#   rubric-json      opencode.json -> .agent["gentle-orchestrator"].prompt
+#   rubric-list      markdown surface WITH the MANDATORY numbered list -> rubric is item 4
+#   rubric-prose     markdown surface WITHOUT the list (claude-code's condensed workflow)
+#                    -> the loose-paragraph shape is the only one that fits
+#   rubric-json      opencode.json -> .agent["gentle-orchestrator"].prompt (carries the list)
 #   rubric-none      host has no strict-TDD forwarding section; nothing to inject
 # ---------------------------------------------------------------------------
 host_rows() {
   cat <<'ROWS'
 claude-code|persona-split|.claude/CLAUDE.md
 claude-code|persona-split|.claude/output-styles/neutral.md
-claude-code|rubric-md|.claude/skills/_shared/sdd-orchestrator-workflow.md
+claude-code|rubric-prose|.claude/skills/_shared/sdd-orchestrator-workflow.md
 pi|persona-marked|.pi/agent/APPEND_SYSTEM.md
-pi|rubric-md|.pi/agent/APPEND_SYSTEM.md
+pi|rubric-list|.pi/agent/APPEND_SYSTEM.md
 opencode|persona-marked|.config/opencode/AGENTS.md
 opencode|rubric-json|.config/opencode/opencode.json
 codex|persona-headed|.codex/AGENTS.md
 codex|rubric-none|.codex/AGENTS.md
 cursor|persona-headed|.cursor/rules/gentle-ai.mdc
-cursor|rubric-md|.cursor/rules/gentle-ai.mdc
+cursor|rubric-list|.cursor/rules/gentle-ai.mdc
 vscode-copilot|persona-headed|.config/Code/User/prompts/gentle-ai.instructions.md
-vscode-copilot|rubric-md|.config/Code/User/prompts/gentle-ai.instructions.md
+vscode-copilot|rubric-list|.config/Code/User/prompts/gentle-ai.instructions.md
 antigravity|persona-marked|.gemini/GEMINI.md
-antigravity|rubric-md|.gemini/GEMINI.md
+antigravity|rubric-list|.gemini/GEMINI.md
 ROWS
 }
 
@@ -142,39 +144,130 @@ persona_apply() {
 }
 
 # ---------------------------------------------------------------------------
-# RUBRIC TDD: insert the paragraph into the strict-TDD forwarding section.
+# RUBRIC TDD.
 #
-# Two known anchor shapes across hosts; the paragraph goes immediately after the
-# strict-TDD forwarding instruction and before whatever follows it.
+# The rubric condition is item 4 of the MANDATORY numbered list in the
+# strict-TDD forwarding section. An earlier version of this overlay appended it
+# as a LOOSE PARAGRAPH trailing the list -- semantically weaker, because a
+# paragraph after the list reads as optional commentary while item 4 of a list
+# headed "(MANDATORY)" inherits that force. This script therefore MIGRATES the
+# loose form to the numbered form wherever it finds it.
+#
+# Hosts carrying the numbered list  -> shape:list-item  (item 4, appended to the list)
+# claude-code's condensed workflow  -> shape:prose      (no list exists; paragraph is
+#                                                        the only shape that fits)
+#
+# The transforms below are PURE and IDEMPOTENT: each one takes the current
+# content on stdin and emits the desired content on stdout. "Already applied" is
+# then simply output == input -- there is no separate, hand-maintained
+# already-applied predicate that could drift from what the transform does.
 # ---------------------------------------------------------------------------
-RUBRIC_TEXT="$(cat "$RUBRIC_FILE")"
 
-# Anchor A (claude-code sdd-orchestrator-workflow.md): condensed one-paragraph form.
-ANCHOR_A='When launching `sdd-apply` or `sdd-verify`, search for testing capabilities'
-# Anchor B (pi, cursor, vscode-copilot, antigravity): numbered list + cache sentence.
-ANCHOR_B='The orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.'
-# Anchor C (opencode.json orchestrator prompt): numbered list, no cache sentence.
-ANCHOR_C='3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction'
+[ -r "$PERSONA_FILE" ] || { echo "FATAL: missing $PERSONA_FILE" >&2; exit 1; }
+[ -r "$RUBRIC_FILE" ]  || { echo "FATAL: missing $RUBRIC_FILE" >&2; exit 1; }
 
-# Injects RUBRIC into stdin-content on stdout. Returns 1 if no anchor matched.
-rubric_inject() {
-  awk -v rubric="$RUBRIC_TEXT" -v a="$ANCHOR_A" -v b="$ANCHOR_B" -v c="$ANCHOR_C" '
-    index($0, b) == 1 && !done { print rubric; print ""; print; done = 1; next }
-    index($0, a) == 1 && !done { print; print ""; print rubric; done = 1; next }
-    index($0, c) == 1 && !done { print; print ""; print rubric; done = 1; next }
-    { print }
-    END { exit(done ? 0 : 1) }
+# Pull one <!-- shape:NAME --> ... <!-- /shape:NAME --> block out of the delta file.
+extract_shape() {
+  awk -v tag_open="<!-- shape:$1 -->" -v tag_close="<!-- /shape:$1 -->" '
+    $0 == tag_close { inside = 0 }
+    inside          { print }
+    $0 == tag_open  { inside = 1 }
+  ' "$RUBRIC_FILE"
+}
+
+RUBRIC_ITEM4="$(extract_shape list-item)"
+RUBRIC_PROSE="$(extract_shape prose)"
+CACHE_NEW="$(extract_shape cache-sentence)"
+
+[ -n "$RUBRIC_ITEM4" ] && [ -n "$RUBRIC_PROSE" ] && [ -n "$CACHE_NEW" ] || {
+  echo "FATAL: $RUBRIC_FILE is missing one of the shape blocks" >&2; exit 1; }
+
+# First line of item 4 -- the marker used to detect "the numbered form is here".
+RUBRIC_ITEM4_HEAD="$(printf '%s\n' "$RUBRIC_ITEM4" | head -1)"
+
+# Anchor: last item of the numbered list. Item 4 is appended directly after it.
+# Prefix match -- hosts differ in the tail ("(sub-agent uses Standard Mode)." vs
+# "(use Standard Mode)." vs nothing at all in opencode.json).
+ANCHOR_ITEM3='3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction'
+
+# Anchor: claude-code's condensed prose form, which has no numbered list.
+ANCHOR_PROSE='When launching `sdd-apply` or `sdd-verify`, search for testing capabilities'
+
+# The weaker caching sentence some hosts carry. Upgraded in place where present,
+# so the rubric is explicitly part of what gets cached. Never invented where absent.
+CACHE_OLD='The orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.'
+
+# Transform for hosts WITH the numbered list. Idempotent:
+#   - inserts item 4 after item 3 only if item 4 is not already there
+#   - drops the legacy loose paragraph (and the blank line it leaves behind)
+#   - upgrades the caching sentence only where the weak one exists
+# Exits 1 if the list anchor is gone (gentle-ai reshaped the template).
+rubric_transform_list() {
+  ITEM4="$RUBRIC_ITEM4" ITEM4_HEAD="$RUBRIC_ITEM4_HEAD" PROSE="$RUBRIC_PROSE" \
+  A3="$ANCHOR_ITEM3" C_OLD="$CACHE_OLD" C_NEW="$CACHE_NEW" \
+  awk '
+    BEGIN {
+      item4 = ENVIRON["ITEM4"]; head = ENVIRON["ITEM4_HEAD"]; prose = ENVIRON["PROSE"]
+      a3 = ENVIRON["A3"];       c_old = ENVIRON["C_OLD"];     c_new = ENVIRON["C_NEW"]
+    }
+    { line[NR] = $0 }
+    END {
+      n = NR
+      for (i = 1; i <= n; i++) {
+        if (!anchor && index(line[i], a3) == 1)   anchor = i    # end of the numbered list
+        if (!have4  && index(line[i], head) == 1) have4  = i    # item 4 already present
+        if (!loose  && line[i] == prose)          loose  = i    # legacy loose paragraph
+      }
+      if (!anchor) exit 1                                       # template changed -> refuse
+
+      if (loose) {
+        drop[loose] = 1
+        # The paragraph sits blank-line-padded. Removing it would leave two
+        # consecutive blanks, so swallow the trailing one.
+        if (line[loose - 1] ~ /^[ \t]*$/ && line[loose + 1] ~ /^[ \t]*$/) drop[loose + 1] = 1
+      }
+
+      for (i = 1; i <= n; i++) {
+        if (drop[i]) continue
+        print (line[i] == c_old) ? c_new : line[i]
+        if (i == anchor && !have4) print item4                  # item 4 joins the list
+      }
+      exit 0
+    }
   '
 }
 
+# Transform for claude-code's condensed workflow: no numbered list exists there, so
+# the loose-paragraph form is the only shape that fits. Left in prose form.
+rubric_transform_prose() {
+  PROSE="$RUBRIC_PROSE" AP="$ANCHOR_PROSE" awk '
+    BEGIN { prose = ENVIRON["PROSE"]; ap = ENVIRON["AP"] }
+    { line[NR] = $0 }
+    END {
+      n = NR
+      for (i = 1; i <= n; i++) {
+        if (!anchor && index(line[i], ap) == 1) anchor = i
+        if (!have   && line[i] == prose)        have   = i
+      }
+      if (!anchor) exit 1
+      for (i = 1; i <= n; i++) {
+        print line[i]
+        if (i == anchor && !have) { print ""; print prose }
+      }
+      exit 0
+    }
+  '
+}
+
+# rc 0 = written/pending, 1 = already applied, 3 = anchor gone.
 rubric_apply_md() {
-  local file="$1" tmp
-  grep -qF -- "$RUBRIC_TEXT" "$file" && return 1          # already applied
+  local file="$1" shape="$2" tmp
   tmp="$(mktemp)"
-  if ! rubric_inject < "$file" > "$tmp"; then rm -f "$tmp"; return 3; fi
+  if ! "rubric_transform_$shape" < "$file" > "$tmp"; then rm -f "$tmp"; return 3; fi
+  if cmp -s "$tmp" "$file"; then rm -f "$tmp"; return 1; fi   # output == input
   if [ "$CHECK_ONLY" -eq 1 ]; then rm -f "$tmp"; return 0; fi
   backup "$file"
-  cat "$tmp" > "$file"
+  cat "$tmp" > "$file"   # preserve inode/permissions
   rm -f "$tmp"
   return 0
 }
@@ -182,39 +275,39 @@ rubric_apply_md() {
 # opencode.json is a 130KB config; the orchestrator prompt is one JSON string
 # value. Round-trip it through jq so the surrounding JSON is never hand-edited.
 rubric_apply_json() {
-  local file="$1" prompt tmp_txt tmp_json
+  local file="$1" tmp_cur tmp_new tmp_json
   command -v jq >/dev/null 2>&1 || return 3
-  prompt="$(jq -r '.agent["gentle-orchestrator"].prompt // empty' "$file")"
-  [ -n "$prompt" ] || return 3
-  case "$prompt" in *"$RUBRIC_TEXT"*) return 1 ;; esac   # already applied
 
-  tmp_txt="$(mktemp)"; tmp_json="$(mktemp)"
-  if ! printf '%s\n' "$prompt" | rubric_inject > "$tmp_txt"; then
-    rm -f "$tmp_txt" "$tmp_json"; return 3
+  tmp_cur="$(mktemp)"; tmp_new="$(mktemp)"; tmp_json="$(mktemp)"
+  jq -r '.agent["gentle-orchestrator"].prompt // empty' "$file" > "$tmp_cur"
+  if [ ! -s "$tmp_cur" ]; then rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3; fi
+
+  if ! rubric_transform_list < "$tmp_cur" > "$tmp_new"; then
+    rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
   fi
-  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f "$tmp_txt" "$tmp_json"; return 0; fi
+  if cmp -s "$tmp_new" "$tmp_cur"; then                       # already applied
+    rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 1
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 0; fi
 
-  if ! jq --rawfile p "$tmp_txt" '.agent["gentle-orchestrator"].prompt = ($p | rtrimstr("\n"))' \
+  if ! jq --rawfile p "$tmp_new" '.agent["gentle-orchestrator"].prompt = ($p | rtrimstr("\n"))' \
         "$file" > "$tmp_json"; then
-    rm -f "$tmp_txt" "$tmp_json"; return 3
+    rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
   fi
   # Never install a JSON file we cannot parse back.
   if ! jq empty "$tmp_json" >/dev/null 2>&1; then
-    rm -f "$tmp_txt" "$tmp_json"; return 3
+    rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
   fi
   backup "$file"
   cat "$tmp_json" > "$file"
-  jq empty "$file" >/dev/null 2>&1 || return 3
-  rm -f "$tmp_txt" "$tmp_json"
+  jq empty "$file" >/dev/null 2>&1 || { rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3; }
+  rm -f "$tmp_cur" "$tmp_new" "$tmp_json"
   return 0
 }
 
 # ---------------------------------------------------------------------------
 # Drive
 # ---------------------------------------------------------------------------
-[ -r "$PERSONA_FILE" ] || { echo "FATAL: missing $PERSONA_FILE" >&2; exit 1; }
-[ -r "$RUBRIC_FILE" ]  || { echo "FATAL: missing $RUBRIC_FILE" >&2; exit 1; }
-
 echo "gentle-ai overrides overlay"
 [ "$CHECK_ONLY" -eq 1 ] && echo "(--check: reporting only, nothing will be written)"
 echo
@@ -252,8 +345,8 @@ for host in $HOSTS; do
           *) report "ANCHOR-NOT-FOUND" "persona" "$short"; MISSING_ANCHOR=1 ;;
         esac
         ;;
-      rubric-md)
-        rubric_apply_md "$file"; rc=$?
+      rubric-list|rubric-prose)
+        rubric_apply_md "$file" "${surface#rubric-}"; rc=$?
         case "$rc" in
           0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "rubric-tdd" "$short"; PENDING=1
              else report "applied" "rubric-tdd" "$short"; CHANGED=1; fi ;;
