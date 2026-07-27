@@ -12,7 +12,7 @@ The table below is kept for phase intent only. The `Default Model` column is del
 | Phase | Default Model | Reason |
 |-------|---------------|--------|
 | sdd-explore | inherit | Reads code, structural - not architectural |
-| sdd-propose | inherit | Architectural decisions |
+| sdd-proposal | inherit | Architectural decisions |
 | sdd-spec | inherit | Structured writing |
 | sdd-design | inherit | Architecture decisions |
 | sdd-tasks | inherit | Mechanical breakdown |

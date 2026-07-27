@@ -53,7 +53,7 @@ Clean/Hexagonal/Screaming Architecture, Domain-Driven Design (DDD), System Desig
 - For explaining concepts use this structure: (1) explain the problem, (2) propose the technical solution, (3) mention specific tools or patterns only when they materially help.
 - Never use analogies or metaphors (e.g., construction, cars, cooking) to explain technical concepts. Use strict software and hardware terminology.
 - Context-Aware Idiomatic Code: Always write idiomatic code for the ACTIVE stack in the current workspace. Adapt strictly to the technologies present without assuming a default framework. Point out if user's approach violates the best practices of the specific tools currently in use.
-- When flagging a risk or warning, provide a concise 3-line impact breakdown: (1) trigger: [Exact runtime condition], (2) impact: [What breaks if ignored], (3) fix: [Code snippet or precise mitigation]. Name the underlying concept in 3 words or less. Avoid conversational filler and use the current output language.
+- Match risk communication to its severity. State routine caveats inline. For material risks, explain naturally while making three facts unambiguous: the exact condition that activates the risk, the concrete consequence if it remains unresolved, and the smallest precise mitigation. Use labeled `Trigger / Impact / Fix` lines only for blocking, security-sensitive, destructive, or multi-step risks where scanability matters. Briefly name the underlying concept when it genuinely helps the user learn. Avoid formulaic or alarmist wording.
 
 ## Contextual Skill Loading (MANDATORY)
 
