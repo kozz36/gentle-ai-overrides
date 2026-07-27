@@ -21,10 +21,15 @@ set -uo pipefail
 
 OVERLAY_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PERSONA_FILE="$OVERLAY_DIR/persona/persona-block.md"
+PERSONA_RULES_FILE="$OVERLAY_DIR/persona/claude-split-rules.md"
+PERSONA_EXPERTISE_FILE="$OVERLAY_DIR/persona/claude-split-expertise.md"
+PERSONA_NEUTRAL_FILE="$OVERLAY_DIR/persona/neutral-style.md"
 RUBRIC_FILE="$OVERLAY_DIR/deltas/rubric-tdd.md"
 PIMODEL_FILE="$OVERLAY_DIR/deltas/pi-model-agnostic.md"
+OPENCODE_ENGRAM_FILE="$OVERLAY_DIR/deltas/opencode-engram-idempotent.md"
 STATE_JSON="$HOME/.gentle-ai/state.json"
-BACKUP_ROOT="$OVERLAY_DIR/backups/$(date +%Y%m%d-%H%M%S)"
+BACKUP_ROOT="${GENTLE_AI_BACKUP_ROOT:-$OVERLAY_DIR/backups/$(date +%Y%m%d-%H%M%S)}"
+BACKED_UP_FILES='|'
 
 CHECK_ONLY=0
 [ "${1:-}" = "--check" ] && CHECK_ONLY=1
@@ -32,6 +37,8 @@ CHECK_ONLY=0
 # Exit codes: 0 = clean, 1 = anchor missing (gentle-ai template changed),
 #             2 = --check found pending work.
 MISSING_ANCHOR=0
+OPERATION_FAILED=0
+TARGET_DRIFT=0
 PENDING=0
 CHANGED=0
 
@@ -41,7 +48,14 @@ CHANGED=0
 # surface:
 #   persona-marked   persona block delimited by <!-- gentle-ai:persona --> markers
 #   persona-headed   persona block with no markers; bounded by "## Rules" .. next <!-- gentle-ai: marker
-#   persona-split    claude-code's newer split shape (CLAUDE.md + output-styles); user-managed, never touched
+#   persona-split-claude  claude-code's newer split shape (CLAUDE.md); overlay
+#                        rewrites only ## Rules and ## Expertise subregions
+#                        inside <!-- gentle-ai:persona -->, preserving the
+#                        installer-managed Contextual Skill Loading and Persona
+#                        Voice sections byte-exact.
+#   persona-split-neutral claude-code's externalized neutral.md (tone/behavior);
+#                        wholesale canonical replacement (no installer-managed
+#                        regions inside).
 #   rubric-list      markdown surface WITH the MANDATORY numbered list -> rubric is item 4
 #   rubric-prose     markdown surface WITHOUT the list (claude-code's condensed workflow)
 #                    -> the loose-paragraph shape is the only one that fits
@@ -53,20 +67,23 @@ CHANGED=0
 # ---------------------------------------------------------------------------
 host_rows() {
   cat <<'ROWS'
-claude-code|persona-split|.claude/CLAUDE.md
-claude-code|persona-split|.claude/output-styles/neutral.md
+claude-code|persona-split-claude|.claude/CLAUDE.md
+claude-code|persona-split-neutral|.claude/output-styles/neutral.md
 claude-code|rubric-prose|.claude/skills/_shared/sdd-orchestrator-workflow.md
 pi|persona-marked|.pi/agent/APPEND_SYSTEM.md
 pi|rubric-list|.pi/agent/APPEND_SYSTEM.md
 pi|pi-models|.pi/agent/APPEND_SYSTEM.md
 opencode|persona-marked|.config/opencode/AGENTS.md
 opencode|rubric-json|.config/opencode/opencode.json
+opencode|engram-idempotent|.config/opencode/plugins/engram.ts
 codex|persona-headed|.codex/AGENTS.md
 codex|rubric-none|.codex/AGENTS.md
 cursor|persona-headed|.cursor/rules/gentle-ai.mdc
 cursor|rubric-list|.cursor/rules/gentle-ai.mdc
 vscode-copilot|persona-headed|.config/Code/User/prompts/gentle-ai.instructions.md
 vscode-copilot|rubric-list|.config/Code/User/prompts/gentle-ai.instructions.md
+gemini-cli|persona-marked|.gemini/GEMINI.md
+gemini-cli|rubric-list|.gemini/GEMINI.md
 antigravity|persona-marked|.gemini/GEMINI.md
 antigravity|rubric-list|.gemini/GEMINI.md
 ROWS
@@ -74,10 +91,15 @@ ROWS
 
 # Hosts gentle-ai currently has installed. Falls back to the full static list.
 installed_hosts() {
+  local hosts
   if [ -r "$STATE_JSON" ] && command -v jq >/dev/null 2>&1; then
-    jq -r '.installed_agents[]?' "$STATE_JSON" 2>/dev/null && return 0
+    hosts="$(jq -r '.installed_agents[]?' "$STATE_JSON" 2>/dev/null)"
+    if [ -n "$hosts" ]; then
+      printf '%s\n' "$hosts"
+      return 0
+    fi
   fi
-  printf '%s\n' claude-code opencode pi codex cursor vscode-copilot antigravity
+  printf '%s\n' claude-code opencode pi codex cursor vscode-copilot gemini-cli antigravity
 }
 
 report() { printf '  %-14s %-14s %s\n' "$1" "$2" "$3"; }
@@ -87,12 +109,51 @@ report() { printf '  %-14s %-14s %s\n' "$1" "$2" "$3"; }
 # the SDD orchestrator), so guard against the second edit overwriting the
 # pre-run snapshot taken by the first.
 backup() {
-  local f="$1" rel dest
+  local f="$1" snapshot="$2" rel dest
+  case "$BACKED_UP_FILES" in *"|$f|"*) return 0 ;; esac
   rel="${f#"$HOME"/}"
   dest="$BACKUP_ROOT/$rel"
-  [ -e "$dest" ] && return 0
-  mkdir -p "$(dirname -- "$dest")"
-  cp -p -- "$f" "$dest"
+  [ ! -e "$dest" ] || return 1
+  mkdir -p "$(dirname -- "$dest")" || return 1
+  cp -p -- "$snapshot" "$dest" || return 1
+  BACKED_UP_FILES="${BACKED_UP_FILES}${f}|"
+}
+
+# The overlay must never follow a link into an arbitrary file. Replacement is
+# atomic only when the temporary file is created beside the target.
+safe_target() {
+  [ ! -L "$1" ] && [ -f "$1" ]
+}
+
+target_tmp() {
+  local file="$1" dir base
+  dir="$(dirname -- "$file")"
+  base="$(basename -- "$file")"
+  mktemp "$dir/.${base}.gentle-ai.XXXXXX"
+}
+
+# Return 4 for an operational failure and 5 when another writer changed the
+# target after the transform read it. The final rename remains same-directory
+# and therefore cannot leave a partially written target behind.
+commit_replacement() {
+  local file="$1" snapshot="$2" replacement="$3" tmp
+
+  safe_target "$file" || return 4
+  cmp -s "$file" "$snapshot" || return 5
+  backup "$file" "$snapshot" || return 4
+
+  tmp="$(target_tmp "$file")" || return 4
+  if ! cp -p -- "$file" "$tmp" || ! cat "$replacement" > "$tmp" || ! cmp -s "$replacement" "$tmp"; then
+    rm -f -- "$tmp"
+    return 4
+  fi
+
+  # Recheck after the backup and immediately before the atomic replacement.
+  if ! safe_target "$file" || ! cmp -s "$file" "$snapshot"; then
+    rm -f -- "$tmp"
+    return 5
+  fi
+  mv -f -- "$tmp" "$file" || { rm -f -- "$tmp"; return 4; }
 }
 
 # ---------------------------------------------------------------------------
@@ -103,20 +164,25 @@ backup() {
 # is located by markers when gentle-ai emits them, otherwise by heading range.
 # ---------------------------------------------------------------------------
 persona_apply() {
-  local file="$1" mode="$2" tmp start end
-  tmp="$(mktemp)"
+  local file="$1" mode="$2" tmp snapshot start end rc
+  tmp="$(target_tmp "$file")" || return 4
+  snapshot="$(target_tmp "$file")" || { rm -f -- "$tmp"; return 4; }
+  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
+    rm -f -- "$tmp" "$snapshot"
+    return 4
+  fi
 
   if [ "$mode" = persona-marked ]; then
-    start="$(grep -n '^<!-- gentle-ai:persona -->$' "$file" | head -1 | cut -d: -f1)"
-    end="$(grep -n '^<!-- /gentle-ai:persona -->$' "$file" | head -1 | cut -d: -f1)"
-    if [ -z "$start" ] || [ -z "$end" ]; then rm -f "$tmp"; return 3; fi
+    start="$(grep -n '^<!-- gentle-ai:persona -->$' "$snapshot" | head -1 | cut -d: -f1)"
+    end="$(grep -n '^<!-- /gentle-ai:persona -->$' "$snapshot" | head -1 | cut -d: -f1)"
+    if [ -z "$start" ] || [ -z "$end" ]; then rm -f -- "$tmp" "$snapshot"; return 3; fi
     # Body sits strictly between the markers.
     start=$((start + 1)); end=$((end - 1))
   else
     # persona-headed: "## Rules" .. line before the first gentle-ai section marker.
-    start="$(grep -n '^## Rules$' "$file" | head -1 | cut -d: -f1)"
-    end="$(grep -n '^<!-- gentle-ai:' "$file" | head -1 | cut -d: -f1)"
-    if [ -z "$start" ] || [ -z "$end" ] || [ "$end" -le "$start" ]; then rm -f "$tmp"; return 3; fi
+    start="$(grep -n '^## Rules$' "$snapshot" | head -1 | cut -d: -f1)"
+    end="$(grep -n '^<!-- gentle-ai:' "$snapshot" | head -1 | cut -d: -f1)"
+    if [ -z "$start" ] || [ -z "$end" ] || [ "$end" -le "$start" ]; then rm -f -- "$tmp" "$snapshot"; return 3; fi
     end=$((end - 1))
   fi
 
@@ -124,28 +190,124 @@ persona_apply() {
   # persona (all 9 sections). Guards against a template reshuffle silently
   # eating unrelated content.
   local sections
-  sections="$(sed -n "${start},${end}p" "$file" | grep -c '^## ')"
-  if [ "$sections" -ne 9 ]; then rm -f "$tmp"; return 3; fi
+  sections="$(sed -n "${start},${end}p" "$snapshot" | grep -c '^## ')"
+  if [ "$sections" -ne 9 ]; then rm -f -- "$tmp" "$snapshot"; return 3; fi
 
   # Already applied? Compare the live region against the canonical block,
   # ignoring blank-line padding.
-  if diff -q <(sed -n "${start},${end}p" "$file" | grep -v '^[[:space:]]*$') \
-             <(grep -v '^[[:space:]]*$' "$PERSONA_FILE") >/dev/null 2>&1; then
-    rm -f "$tmp"; return 1
+  if diff -q <(sed -n "${start},${end}p" "$snapshot" | grep -v '^[[:space:]]*$') \
+              <(grep -v '^[[:space:]]*$' "$PERSONA_FILE") >/dev/null 2>&1; then
+    rm -f -- "$tmp" "$snapshot"; return 1
   fi
 
-  {
-    [ "$start" -gt 1 ] && sed -n "1,$((start - 1))p" "$file"
+  if ! {
+    [ "$start" -gt 1 ] && sed -n "1,$((start - 1))p" "$snapshot"
     cat "$PERSONA_FILE"
     echo ""
-    sed -n "$((end + 1)),\$p" "$file"
-  } > "$tmp"
+    sed -n "$((end + 1)),\$p" "$snapshot"
+  } > "$tmp"; then
+    rm -f -- "$tmp" "$snapshot"; return 4
+  fi
 
-  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f "$tmp"; return 0; fi
-  backup "$file"
-  cat "$tmp" > "$file"   # preserve inode/permissions
-  rm -f "$tmp"
-  return 0
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$tmp" "$snapshot"; return 0; fi
+  commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
+  rm -f -- "$tmp" "$snapshot"
+  return "$rc"
+}
+
+# ---------------------------------------------------------------------------
+# Persona split for claude-code: the new gentle-ai shape puts only
+# Rules/Expertise/Contextual Skill Loading/Persona Voice inside the
+# <!-- gentle-ai:persona --> block of CLAUDE.md, and externalizes
+# Personality/Tone/Behavior/Language to ~/.claude/output-styles/neutral.md.
+#
+# This function replaces ONLY the ## Rules and ## Expertise subregions inside
+# the marked persona block, preserving Contextual Skill Loading and Persona
+# Voice byte-exact (those carry installer-managed directives, not user tone).
+# Anchor: heading-bounded within the persona block. If the headings vanish
+# (template reshuffle), refuse with rc 3.
+# ---------------------------------------------------------------------------
+persona_split_claude_apply() {
+  local file="$1" tmp snapshot p_start p_end rules_start exp_start skills_start voice_start exp_end rc
+  tmp="$(target_tmp "$file")" || return 4
+  snapshot="$(target_tmp "$file")" || { rm -f -- "$tmp"; return 4; }
+  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
+    rm -f -- "$tmp" "$snapshot"
+    return 4
+  fi
+
+  p_start="$(grep -n '^<!-- gentle-ai:persona -->$' "$snapshot" | head -1 | cut -d: -f1)"
+  p_end="$(grep -n '^<!-- /gentle-ai:persona -->$' "$snapshot" | head -1 | cut -d: -f1)"
+  if [ -z "$p_start" ] || [ -z "$p_end" ] || [ "$p_start" -ge "$p_end" ]; then rm -f -- "$tmp" "$snapshot"; return 3; fi
+
+  # Each delimiter and managed heading must occur exactly once and in order.
+  if [ "$(grep -c '^<!-- gentle-ai:persona -->$' "$snapshot")" -ne 1 ] || \
+     [ "$(grep -c '^<!-- /gentle-ai:persona -->$' "$snapshot")" -ne 1 ]; then
+    rm -f -- "$tmp" "$snapshot"; return 3
+  fi
+  rules_start="$(awk -v s="$p_start" -v e="$p_end" 'NR>s && NR<e && /^## Rules$/{n++; line=NR} END {if (n == 1) print line}' "$snapshot")"
+  exp_start="$(awk -v s="$p_start" -v e="$p_end" 'NR>s && NR<e && /^## Expertise$/{n++; line=NR} END {if (n == 1) print line}' "$snapshot")"
+  skills_start="$(awk -v s="$p_start" -v e="$p_end" 'NR>s && NR<e && /^## Contextual Skill Loading( \(MANDATORY\))?$/{n++; line=NR} END {if (n == 1) print line}' "$snapshot")"
+  voice_start="$(awk -v s="$p_start" -v e="$p_end" 'NR>s && NR<e && /^## Persona Voice$/{n++; line=NR} END {if (n == 1) print line}' "$snapshot")"
+  if [ -z "$rules_start" ] || [ -z "$exp_start" ] || [ -z "$skills_start" ] || [ -z "$voice_start" ] || \
+     [ "$rules_start" -ge "$exp_start" ] || [ "$exp_start" -ge "$skills_start" ] || [ "$skills_start" -ge "$voice_start" ]; then
+    rm -f -- "$tmp" "$snapshot"; return 3
+  fi
+
+  # ## Expertise region ENDS at the line before the next ## heading after it.
+  # This is where the canonical ## Expertise block ends (includes Expertise
+  # heading, content, and trailing blank lines up to next ##).
+  exp_end=$((skills_start - 1))
+
+  # For comparison: live Rules region is rules_start .. (exp_start - 1) which
+  # includes everything from "## Rules" through the blank line(s) before
+  # "## Expertise".
+  local live_rules live_exp can_rules can_exp
+  live_rules="$(sed -n "${rules_start},$((exp_start - 1))p" "$snapshot" | grep -v '^[[:space:]]*$')"
+  live_exp="$(sed -n "${exp_start},${exp_end}p" "$snapshot" | grep -v '^[[:space:]]*$')"
+  can_rules="$(grep -v '^[[:space:]]*$' "$PERSONA_RULES_FILE")"
+  can_exp="$(grep -v '^[[:space:]]*$' "$PERSONA_EXPERTISE_FILE")"
+  if [ "$live_rules" = "$can_rules" ] && [ "$live_exp" = "$can_exp" ]; then
+    rm -f -- "$tmp" "$snapshot"; return 1
+  fi
+
+  # Rebuild: head (up to line before ## Rules) .. canonical Rules (starts with
+  # "## Rules") .. blank separator .. canonical Expertise (starts with
+  # "## Expertise") .. tail (from line after Expertise region).
+  if ! {
+    [ "$rules_start" -gt 1 ] && sed -n "1,$((rules_start - 1))p" "$snapshot"
+    cat "$PERSONA_RULES_FILE"
+    echo ""
+    cat "$PERSONA_EXPERTISE_FILE"
+    echo ""
+    sed -n "$((exp_end + 1)),\$p" "$snapshot"
+  } > "$tmp"; then
+    rm -f -- "$tmp" "$snapshot"; return 4
+  fi
+
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$tmp" "$snapshot"; return 0; fi
+  commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
+  rm -f -- "$tmp" "$snapshot"
+  return "$rc"
+}
+
+# ---------------------------------------------------------------------------
+# Persona split for claude-code's neutral.md: the externalized tone/behavior
+# file. Wholesale replacement with the canonical file (the entire file is
+# user-owned; there are no installer-managed regions inside it).
+# ---------------------------------------------------------------------------
+persona_split_neutral_apply() {
+  local file="$1" snapshot rc
+  snapshot="$(target_tmp "$file")" || return 4
+  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
+    rm -f -- "$snapshot"
+    return 4
+  fi
+  if diff -q "$snapshot" "$PERSONA_NEUTRAL_FILE" >/dev/null 2>&1; then rm -f -- "$snapshot"; return 1; fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$snapshot"; return 0; fi
+  commit_replacement "$file" "$snapshot" "$PERSONA_NEUTRAL_FILE"; rc=$?
+  rm -f -- "$snapshot"
+  return "$rc"
 }
 
 # ---------------------------------------------------------------------------
@@ -169,8 +331,12 @@ persona_apply() {
 # ---------------------------------------------------------------------------
 
 [ -r "$PERSONA_FILE" ]  || { echo "FATAL: missing $PERSONA_FILE" >&2; exit 1; }
+[ -r "$PERSONA_RULES_FILE" ]     || { echo "FATAL: missing $PERSONA_RULES_FILE" >&2; exit 1; }
+[ -r "$PERSONA_EXPERTISE_FILE" ]|| { echo "FATAL: missing $PERSONA_EXPERTISE_FILE" >&2; exit 1; }
+[ -r "$PERSONA_NEUTRAL_FILE" ]  || { echo "FATAL: missing $PERSONA_NEUTRAL_FILE" >&2; exit 1; }
 [ -r "$RUBRIC_FILE" ]   || { echo "FATAL: missing $RUBRIC_FILE" >&2; exit 1; }
 [ -r "$PIMODEL_FILE" ]  || { echo "FATAL: missing $PIMODEL_FILE" >&2; exit 1; }
+[ -r "$OPENCODE_ENGRAM_FILE" ] || { echo "FATAL: missing $OPENCODE_ENGRAM_FILE" >&2; exit 1; }
 
 # Pull one <!-- shape:NAME --> ... <!-- /shape:NAME --> block out of a delta file.
 extract_shape_from() {
@@ -283,113 +449,245 @@ rubric_transform_prose() {
 # ---------------------------------------------------------------------------
 PI_BLOCK="$(extract_shape_from "$PIMODEL_FILE" block)"
 PI_SKILLS="$(extract_shape_from "$PIMODEL_FILE" skills-sentence)"
+OPENCODE_ENGRAM_BLOCK="$(extract_shape_from "$OPENCODE_ENGRAM_FILE" block)"
+OPENCODE_ENGRAM_STOCK_BLOCK='    "experimental.chat.system.transform": async (input, output) => {
+      if (output.system.length > 0) {
+        output.system[output.system.length - 1] += "\n\n" + MEMORY_INSTRUCTIONS
+      } else {
+        output.system.push(MEMORY_INSTRUCTIONS)
+      }'
 
 [ -n "$PI_BLOCK" ] && [ -n "$PI_SKILLS" ] || {
   echo "FATAL: $PIMODEL_FILE is missing one of the shape blocks" >&2; exit 1; }
+
+[ -n "$OPENCODE_ENGRAM_BLOCK" ] || {
+  echo "FATAL: $OPENCODE_ENGRAM_FILE is missing the block shape" >&2; exit 1; }
 
 PI_MARK_OPEN='<!-- gentle-ai:sdd-model-assignments -->'
 PI_MARK_CLOSE='<!-- /gentle-ai:sdd-model-assignments -->'
 # The one sentence outside the block that tells the orchestrator to cache and pass
 # `phase -> alias`. Matched by prefix; replaced wholesale.
 PI_SKILLS_ANCHOR='The orchestrator resolves skills from the registry ONCE'
+PI_PROPOSAL_INTERACTIVE_HEAD='Before the `sdd-'
+PI_PROPOSAL_INTERACTIVE_TAIL=' phase in interactive mode, offer the user a proposal question round'
+PI_PROPOSAL_DELEGATION_HEAD='Only for a selected SDD route, delegate to these phase agents: sdd-init, sdd-explore, '
+PI_PROPOSAL_DELEGATION_TAIL=', sdd-spec, sdd-design, sdd-tasks, sdd-apply, sdd-verify, sdd-archive, sdd-onboard.'
+PI_PROPOSAL_TABLE_HEAD='| `sdd-'
+PI_PROPOSAL_TABLE_TAIL='` | exploration (optional) | `proposal` |'
 
 # Pure + idempotent: replaces the marker-delimited body and the alias sentence.
-# Exits 1 if either marker is gone.
+# Refuses missing/duplicate markers or any absent/duplicate proposal context.
 pimodel_transform() {
   BLOCK="$PI_BLOCK" SKILLS="$PI_SKILLS" \
   M_OPEN="$PI_MARK_OPEN" M_CLOSE="$PI_MARK_CLOSE" S_ANCHOR="$PI_SKILLS_ANCHOR" \
+  P1H="$PI_PROPOSAL_INTERACTIVE_HEAD" P1T="$PI_PROPOSAL_INTERACTIVE_TAIL" \
+  P2H="$PI_PROPOSAL_DELEGATION_HEAD" P2T="$PI_PROPOSAL_DELEGATION_TAIL" \
+  P3H="$PI_PROPOSAL_TABLE_HEAD" P3T="$PI_PROPOSAL_TABLE_TAIL" \
   awk '
     BEGIN {
       block = ENVIRON["BLOCK"]; skills = ENVIRON["SKILLS"]
       m_open = ENVIRON["M_OPEN"]; m_close = ENVIRON["M_CLOSE"]; s_anchor = ENVIRON["S_ANCHOR"]
+      p1h = ENVIRON["P1H"]; p1t = ENVIRON["P1T"]
+      p2h = ENVIRON["P2H"]; p2t = ENVIRON["P2T"]
+      p3h = ENVIRON["P3H"]; p3t = ENVIRON["P3T"]
     }
     { line[NR] = $0 }
     END {
       n = NR
       for (i = 1; i <= n; i++) {
-        if (!o && line[i] == m_open)  o = i
-        if (o && !c && line[i] == m_close) c = i
+        if (line[i] == m_open)  { opens++; o = i }
+        if (line[i] == m_close) { closes++; c = i }
       }
-      if (!o || !c) exit 1                                   # template changed -> refuse
+      if (opens != 1 || closes != 1 || !o || !c || o >= c) exit 1
 
       for (i = 1; i <= n; i++) {
         if (i > o && i < c) continue                         # drop the old body
         if (i == c) { print block; print "" }                # canonical body, then the marker
-        print (index(line[i], s_anchor) == 1) ? skills : line[i]
+        rendered = (index(line[i], s_anchor) == 1) ? skills : line[i]
+        # Only the three known Pi SDD contexts use the concrete proposal-agent
+        # identifier. Never rewrite unrelated user or installer text globally.
+        if (index(line[i], p1h) == 1 && index(line[i], p1t) && \
+            (index(line[i], "sdd-propose") || index(line[i], "sdd-proposal"))) {
+          proposal_interactive++
+          sub(/sdd-propose/, "sdd-proposal", rendered)
+        }
+        if (index(line[i], p2h) == 1 && index(line[i], p2t) && \
+            (index(line[i], "sdd-propose") || index(line[i], "sdd-proposal"))) {
+          proposal_delegation++
+          sub(/sdd-propose/, "sdd-proposal", rendered)
+        }
+        if (index(line[i], p3h) == 1 && index(line[i], p3t) && \
+            (index(line[i], "sdd-propose") || index(line[i], "sdd-proposal"))) {
+          proposal_table++
+          sub(/sdd-propose/, "sdd-proposal", rendered)
+        }
+        print rendered
       }
+      if (proposal_interactive != 1 || proposal_delegation != 1 || proposal_table != 1) exit 1
       exit 0
     }
   '
 }
 
 pimodel_apply() {
-  local file="$1" tmp
-  tmp="$(mktemp)"
-  if ! pimodel_transform < "$file" > "$tmp"; then rm -f "$tmp"; return 3; fi
-  if cmp -s "$tmp" "$file"; then rm -f "$tmp"; return 1; fi   # output == input
-  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f "$tmp"; return 0; fi
-  backup "$file"
-  cat "$tmp" > "$file"   # preserve inode/permissions
-  rm -f "$tmp"
-  return 0
+  local file="$1" tmp snapshot rc
+  tmp="$(target_tmp "$file")" || return 4
+  snapshot="$(target_tmp "$file")" || { rm -f -- "$tmp"; return 4; }
+  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
+    rm -f -- "$tmp" "$snapshot"; return 4
+  fi
+  if ! pimodel_transform < "$snapshot" > "$tmp"; then rm -f -- "$tmp" "$snapshot"; return 3; fi
+  if cmp -s "$tmp" "$snapshot"; then rm -f -- "$tmp" "$snapshot"; return 1; fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$tmp" "$snapshot"; return 0; fi
+  commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
+  rm -f -- "$tmp" "$snapshot"
+  return "$rc"
 }
 
-# rc 0 = written/pending, 1 = already applied, 3 = anchor gone.
+# ---------------------------------------------------------------------------
+# OpenCode Engram prompt injection.
+#
+# OpenCode already receives the full Engram protocol through AGENTS.md. Keep
+# the plugin fallback for configurations without that protocol, but avoid
+# appending a second copy on every message when the protocol is already in the
+# merged system prompt. The save nudge below this block remains untouched.
+# ---------------------------------------------------------------------------
+opencode_engram_transform() {
+  BLOCK="$OPENCODE_ENGRAM_BLOCK" STOCK="$OPENCODE_ENGRAM_STOCK_BLOCK" awk '
+    BEGIN {
+      block = ENVIRON["BLOCK"]; stock = ENVIRON["STOCK"]
+      start = "    \"experimental.chat.system.transform\": async (input, output) => {"
+      save_nudge = "      // ── Save nudge"
+    }
+    { line[NR] = $0 }
+    END {
+      n = NR
+      for (i = 1; i <= n; i++) {
+        if (line[i] == start) { starts++; start_line = i }
+        if (index(line[i], save_nudge) == 1) { nudges++; nudge_line = i }
+      }
+      if (starts != 1 || nudges != 1 || start_line >= nudge_line) exit 1
+
+      last = nudge_line - 1
+      while (last >= start_line && line[last] ~ /^[[:space:]]*$/) last--
+      managed = ""
+      for (i = start_line; i <= last; i++) managed = managed (i == start_line ? "" : "\n") line[i]
+      if (managed != stock && managed != block) exit 1
+
+      for (i = 1; i <= n; i++) {
+        if (i == start_line) {
+          print block
+          print ""
+        }
+        if (i >= start_line && i < nudge_line) continue
+        print line[i]
+      }
+      exit 0
+    }
+  '
+}
+
+opencode_engram_apply() {
+  local file="$1" tmp snapshot rc
+  tmp="$(target_tmp "$file")" || return 4
+  snapshot="$(target_tmp "$file")" || { rm -f -- "$tmp"; return 4; }
+  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
+    rm -f -- "$tmp" "$snapshot"; return 4
+  fi
+  if ! opencode_engram_transform < "$snapshot" > "$tmp"; then rm -f -- "$tmp" "$snapshot"; return 3; fi
+  if cmp -s "$tmp" "$snapshot"; then rm -f -- "$tmp" "$snapshot"; return 1; fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$tmp" "$snapshot"; return 0; fi
+  commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
+  rm -f -- "$tmp" "$snapshot"
+  return "$rc"
+}
+
+# rc 0 = written/pending, 1 = already applied, 3 = anchor gone,
+# 4 = operational failure, 5 = target drift.
 rubric_apply_md() {
-  local file="$1" shape="$2" tmp
-  tmp="$(mktemp)"
-  if ! "rubric_transform_$shape" < "$file" > "$tmp"; then rm -f "$tmp"; return 3; fi
-  if cmp -s "$tmp" "$file"; then rm -f "$tmp"; return 1; fi   # output == input
-  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f "$tmp"; return 0; fi
-  backup "$file"
-  cat "$tmp" > "$file"   # preserve inode/permissions
-  rm -f "$tmp"
-  return 0
+  local file="$1" shape="$2" tmp snapshot rc
+  tmp="$(target_tmp "$file")" || return 4
+  snapshot="$(target_tmp "$file")" || { rm -f -- "$tmp"; return 4; }
+  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
+    rm -f -- "$tmp" "$snapshot"; return 4
+  fi
+  if ! "rubric_transform_$shape" < "$snapshot" > "$tmp"; then rm -f -- "$tmp" "$snapshot"; return 3; fi
+  if cmp -s "$tmp" "$snapshot"; then rm -f -- "$tmp" "$snapshot"; return 1; fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$tmp" "$snapshot"; return 0; fi
+  commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
+  rm -f -- "$tmp" "$snapshot"
+  return "$rc"
 }
 
 # opencode.json is a 130KB config; the orchestrator prompt is one JSON string
 # value. Round-trip it through jq so the surrounding JSON is never hand-edited.
 rubric_apply_json() {
-  local file="$1" tmp_cur tmp_new tmp_json
+  local file="$1" snapshot tmp_cur tmp_new tmp_json rc
   command -v jq >/dev/null 2>&1 || return 3
 
-  tmp_cur="$(mktemp)"; tmp_new="$(mktemp)"; tmp_json="$(mktemp)"
-  jq -r '.agent["gentle-orchestrator"].prompt // empty' "$file" > "$tmp_cur"
-  if [ ! -s "$tmp_cur" ]; then rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3; fi
+  snapshot="$(target_tmp "$file")" || return 4
+  tmp_cur="$(target_tmp "$file")" || { rm -f -- "$snapshot"; return 4; }
+  tmp_new="$(target_tmp "$file")" || { rm -f -- "$snapshot" "$tmp_cur"; return 4; }
+  tmp_json="$(target_tmp "$file")" || { rm -f -- "$snapshot" "$tmp_cur" "$tmp_new"; return 4; }
+  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
+    rm -f -- "$snapshot" "$tmp_cur" "$tmp_new" "$tmp_json"; return 4
+  fi
+  if ! jq -r '.agent["gentle-orchestrator"].prompt // empty' "$snapshot" > "$tmp_cur" || [ ! -s "$tmp_cur" ]; then
+    rm -f -- "$snapshot" "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
+  fi
 
   if ! rubric_transform_list < "$tmp_cur" > "$tmp_new"; then
-    rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
+    rm -f -- "$snapshot" "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
   fi
   if cmp -s "$tmp_new" "$tmp_cur"; then                       # already applied
-    rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 1
+    rm -f -- "$snapshot" "$tmp_cur" "$tmp_new" "$tmp_json"; return 1
   fi
-  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 0; fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$snapshot" "$tmp_cur" "$tmp_new" "$tmp_json"; return 0; fi
 
   if ! jq --rawfile p "$tmp_new" '.agent["gentle-orchestrator"].prompt = ($p | rtrimstr("\n"))' \
-        "$file" > "$tmp_json"; then
-    rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
+        "$snapshot" > "$tmp_json"; then
+    rm -f -- "$snapshot" "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
   fi
   # Never install a JSON file we cannot parse back.
   if ! jq empty "$tmp_json" >/dev/null 2>&1; then
-    rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
+    rm -f -- "$snapshot" "$tmp_cur" "$tmp_new" "$tmp_json"; return 3
   fi
-  backup "$file"
-  cat "$tmp_json" > "$file"
-  jq empty "$file" >/dev/null 2>&1 || { rm -f "$tmp_cur" "$tmp_new" "$tmp_json"; return 3; }
-  rm -f "$tmp_cur" "$tmp_new" "$tmp_json"
-  return 0
+  commit_replacement "$file" "$snapshot" "$tmp_json"; rc=$?
+  rm -f -- "$snapshot" "$tmp_cur" "$tmp_new" "$tmp_json"
+  return "$rc"
 }
 
 # ---------------------------------------------------------------------------
 # Drive
 # ---------------------------------------------------------------------------
+if [ "${APPLY_SH_LIB:-0}" = 1 ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+if [ "$CHECK_ONLY" -eq 0 ]; then
+  "$OVERLAY_DIR/apply.sh" --check >/dev/null
+  preflight_rc=$?
+  case "$preflight_rc" in
+    0|2) ;;
+    1)
+      echo "FAIL: preflight found a missing file or anchor; nothing was written."
+      echo "      Run $OVERLAY_DIR/apply.sh --check for details."
+      exit 1
+      ;;
+    *)
+      echo "FAIL: preflight exited unexpectedly with status $preflight_rc; nothing was written."
+      exit "$preflight_rc"
+      ;;
+  esac
+fi
+
 echo "gentle-ai overrides overlay"
 [ "$CHECK_ONLY" -eq 1 ] && echo "(--check: reporting only, nothing will be written)"
 echo
 
 HOSTS="$(installed_hosts)"
 
-for host in $HOSTS; do
+while IFS= read -r host; do
   echo "$host"
   matched=0
   while IFS='|' read -r h surface rel; do
@@ -398,18 +696,41 @@ for host in $HOSTS; do
     file="$HOME/$rel"
     short="${rel}"
 
-    if [ ! -f "$file" ]; then
+    if [ ! -e "$file" ] && [ ! -L "$file" ]; then
       report "MISSING-FILE" "$surface" "$short"
       MISSING_ANCHOR=1
       continue
     fi
+    if ! safe_target "$file"; then
+      report "UNSAFE-TARGET" "$surface" "$short"
+      OPERATION_FAILED=1
+      break 2
+    fi
 
     case "$surface" in
-      persona-split)
-        # claude-code's newer split persona shape. The user maintains these by
-        # hand and they are already correct; the overlay deliberately does not
-        # rewrite them.
-        report "already-applied" "persona" "$short (user-managed split shape)"
+      persona-split-claude)
+        persona_split_claude_apply "$file"; rc=$?
+        case "$rc" in
+          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "persona" "$short (split: Rules+Expertise)"; PENDING=1
+              else report "applied" "persona" "$short (split: Rules+Expertise)"; CHANGED=1; fi ;;
+          1) report "already-applied" "persona" "$short (split: Rules+Expertise)" ;;
+          3) report "ANCHOR-NOT-FOUND" "persona" "$short (split: Rules+Expertise)"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "persona" "$short (split: Rules+Expertise)"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "persona" "$short (split: Rules+Expertise)"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "persona" "$short (split: Rules+Expertise)"; OPERATION_FAILED=1 ;;
+        esac
+        ;;
+      persona-split-neutral)
+        persona_split_neutral_apply "$file"; rc=$?
+        case "$rc" in
+          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "persona" "$short (split: neutral)"; PENDING=1
+              else report "applied" "persona" "$short (split: neutral)"; CHANGED=1; fi ;;
+          1) report "already-applied" "persona" "$short (split: neutral)" ;;
+          3) report "ANCHOR-NOT-FOUND" "persona" "$short (split: neutral)"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "persona" "$short (split: neutral)"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "persona" "$short (split: neutral)"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "persona" "$short (split: neutral)"; OPERATION_FAILED=1 ;;
+        esac
         ;;
       persona-marked|persona-headed)
         persona_apply "$file" "$surface"; rc=$?
@@ -417,7 +738,10 @@ for host in $HOSTS; do
           0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "persona" "$short"; PENDING=1
              else report "applied" "persona" "$short"; CHANGED=1; fi ;;
           1) report "already-applied" "persona" "$short" ;;
-          *) report "ANCHOR-NOT-FOUND" "persona" "$short"; MISSING_ANCHOR=1 ;;
+          3) report "ANCHOR-NOT-FOUND" "persona" "$short"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "persona" "$short"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "persona" "$short"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "persona" "$short"; OPERATION_FAILED=1 ;;
         esac
         ;;
       rubric-list|rubric-prose)
@@ -426,7 +750,10 @@ for host in $HOSTS; do
           0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "rubric-tdd" "$short"; PENDING=1
              else report "applied" "rubric-tdd" "$short"; CHANGED=1; fi ;;
           1) report "already-applied" "rubric-tdd" "$short" ;;
-          *) report "ANCHOR-NOT-FOUND" "rubric-tdd" "$short"; MISSING_ANCHOR=1 ;;
+          3) report "ANCHOR-NOT-FOUND" "rubric-tdd" "$short"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "rubric-tdd" "$short"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "rubric-tdd" "$short"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "rubric-tdd" "$short"; OPERATION_FAILED=1 ;;
         esac
         ;;
       rubric-json)
@@ -435,7 +762,22 @@ for host in $HOSTS; do
           0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "rubric-tdd" "$short"; PENDING=1
              else report "applied" "rubric-tdd" "$short (jq)"; CHANGED=1; fi ;;
           1) report "already-applied" "rubric-tdd" "$short (jq)" ;;
-          *) report "ANCHOR-NOT-FOUND" "rubric-tdd" "$short (jq)"; MISSING_ANCHOR=1 ;;
+          3) report "ANCHOR-NOT-FOUND" "rubric-tdd" "$short (jq)"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "rubric-tdd" "$short (jq)"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "rubric-tdd" "$short (jq)"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "rubric-tdd" "$short (jq)"; OPERATION_FAILED=1 ;;
+        esac
+        ;;
+      engram-idempotent)
+        opencode_engram_apply "$file"; rc=$?
+        case "$rc" in
+          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "engram" "$short (idempotent injection)"; PENDING=1
+             else report "applied" "engram" "$short (idempotent injection)"; CHANGED=1; fi ;;
+          1) report "already-applied" "engram" "$short (idempotent injection)" ;;
+          3) report "ANCHOR-NOT-FOUND" "engram" "$short (idempotent injection)"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "engram" "$short (idempotent injection)"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "engram" "$short (idempotent injection)"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "engram" "$short (idempotent injection)"; OPERATION_FAILED=1 ;;
         esac
         ;;
       rubric-none)
@@ -448,16 +790,34 @@ for host in $HOSTS; do
           0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "pi-models" "$short"; PENDING=1
              else report "applied" "pi-models" "$short"; CHANGED=1; fi ;;
           1) report "already-applied" "pi-models" "$short" ;;
-          *) report "ANCHOR-NOT-FOUND" "pi-models" "$short"; MISSING_ANCHOR=1 ;;
+          3) report "ANCHOR-NOT-FOUND" "pi-models" "$short"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "pi-models" "$short"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "pi-models" "$short"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "pi-models" "$short"; OPERATION_FAILED=1 ;;
         esac
         ;;
     esac
+    if [ "$OPERATION_FAILED" -eq 1 ] || [ "$TARGET_DRIFT" -eq 1 ]; then
+      break 2
+    fi
   done <<EOF
 $(host_rows)
 EOF
   [ "$matched" -eq 1 ] || report "unknown-host" "-" "no artifacts mapped"
   echo
-done
+done <<HOSTS_EOF
+$HOSTS
+HOSTS_EOF
+
+if [ "$OPERATION_FAILED" -eq 1 ]; then
+  echo "FAIL: a target was unsafe or a backup/write operation failed; nothing further was written."
+  exit 1
+fi
+
+if [ "$TARGET_DRIFT" -eq 1 ]; then
+  echo "FAIL: a target changed while it was being transformed; it was not overwritten."
+  exit 1
+fi
 
 if [ "$MISSING_ANCHOR" -eq 1 ]; then
   echo "FAIL: an anchor was not found. gentle-ai most likely changed its template;"

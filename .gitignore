@@ -1,1 +1,4 @@
 backups/
+.codegraph/
+tests/.tmp/
+tests/*.out
