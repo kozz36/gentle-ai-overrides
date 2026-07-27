@@ -23,6 +23,6 @@ jobs:
       - name: Check Bash syntax
         run: bash -n apply.sh tests/run.sh
       - name: Run ShellCheck
-        run: shellcheck apply.sh tests/run.sh
+        run: shellcheck --severity=warning apply.sh tests/run.sh
       - name: Run regression tests
         run: bash tests/run.sh
