@@ -1,18 +1,30 @@
-# gentle-ai overrides overlay
+# Gentle AI Overrides
 
-`gentle-ai` (2.1.0) embeds every prompt asset inside its Go binary and **regenerates
-the host agent-config files from those templates on every `sync`, `upgrade` and
-`install`**. Any hand-made customization in those files is wiped.
+An anchor-based overlay that reapplies personal prompt and orchestration changes
+after [Gentle AI](https://github.com/Gentleman-Programming/gentle-ai) regenerates
+its managed agent configuration.
 
-This overlay stores those customizations outside gentle-ai's reach and re-applies
-them on demand.
+This is an unofficial, community-maintained project. It is not affiliated with,
+endorsed by, or supported by Gentleman Programming. Gentle AI and its original
+prompt assets are licensed separately; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
+Validated with Gentle AI `2.2.0` on Linux and macOS.
+
+## Install
+
+Requirements: Bash 3.2 or newer and standard POSIX command-line tools. `jq` is
+required when OpenCode is installed.
+
+```sh
+git clone https://github.com/kozz36/gentle-ai-overrides.git ~/gentle-ai-overrides
+cd ~/gentle-ai-overrides
+./apply.sh --check
+./apply.sh
 ```
-after every `gentle-ai sync|upgrade|install`  ->  run  ~/gentle-ai-overrides/apply.sh
-```
 
-`apply.sh` **never** invokes `gentle-ai` itself, and it never touches
-`~/.gentle-ai/state.json`.
+Run the overlay after every `gentle-ai sync`, `gentle-ai upgrade`, or
+`gentle-ai install`. Gentle AI regenerates host configuration from embedded
+templates during those operations, replacing manual edits.
 
 ## Usage
 
@@ -26,11 +38,30 @@ Exit codes:
 | Code | Meaning |
 | --- | --- |
 | `0` | Overlay applied, or already applied (no-op). |
-| `1` | An anchor was not found: gentle-ai changed its template. **The overlay needs review** before it can be trusted again. |
+| `1` | Safety failure: missing/ambiguous anchor, unsafe target, failed backup/write, or concurrent target change. |
 | `2` | `--check` only: work is pending. |
 
-Every file is copied to `backups/<timestamp>/<path-relative-to-$HOME>` before the
-first write of a run. A run that changes nothing creates no backup directory.
+`apply.sh` never invokes Gentle AI and never modifies
+`~/.gentle-ai/state.json`. Before each first write, it copies the original file
+to `backups/<timestamp>/<path-relative-to-$HOME>`. It refuses symbolic links,
+non-regular targets, missing or ambiguous anchors, failed backups, and targets
+that change during transformation. A no-op or `--check` run creates no backup.
+
+## Compatibility
+
+The transforms intentionally fail closed when an upstream template no longer
+matches a known structure. After upgrading Gentle AI:
+
+1. Run `./apply.sh --check`.
+2. Review any `ANCHOR-NOT-FOUND` result against the new upstream template.
+3. Update and test the matching transform before applying it.
+
+The regression suite runs on Ubuntu and macOS:
+
+```sh
+bash -n apply.sh tests/run.sh
+bash tests/run.sh
+```
 
 ## What is in the overlay
 
@@ -56,14 +87,30 @@ to the stock `neutral` persona:
   architecture, AI agent orchestration, testing, LazyVim, Tmux, Zellij (replaces
   "atomic design, container-presentational pattern").
 - **Behavior** — drops the construction-analogy bullet and adds three rules: never
-  use analogies/metaphors, Context-Aware Idiomatic Code, and the 3-line risk
-  breakdown (trigger / impact / fix).
+  use analogies/metaphors, Context-Aware Idiomatic Code, and severity-aware risk
+  communication that preserves condition / consequence / mitigation without
+  forcing routine caveats into a rigid template.
 
 Because the persona body gentle-ai renders is **byte-identical across all old-shape
 hosts**, the overlay ships one canonical block and stamps it into each of them.
 This is a whole-block replacement, not a bullet-by-bullet merge.
 
-### 2. `deltas/rubric-tdd.md` — the RUBRIC TDD condition
+### 2. Claude Code split-persona files
+
+Claude Code uses a split persona instead of the nine-section inline block:
+
+- `persona/claude-split-rules.md` replaces only `## Rules` inside the marked
+  persona block in `~/.claude/CLAUDE.md`.
+- `persona/claude-split-expertise.md` replaces only `## Expertise` in that same
+  block.
+- `persona/neutral-style.md` is the canonical complete
+  `~/.claude/output-styles/neutral.md` file.
+
+`## Contextual Skill Loading` and `## Persona Voice` remain installer-managed
+and are preserved byte-for-byte. Missing persona markers or either targeted
+heading fail the preflight before any file is written.
+
+### 3. `deltas/rubric-tdd.md` — the RUBRIC TDD condition
 
 The rubric condition tells the orchestrator that when a project's `sdd-init` defines
 a per-work-type test rubric, it must classify the change by its diff signature and
@@ -96,11 +143,10 @@ The delta file carries three blocks, each fenced by `<!-- shape:NAME -->` marker
 | `prose` | the condensed paragraph — the one host that has no list (see below) |
 | `cache-sentence` | the richer "resolves the rubric + `strict_tdd` ONCE per session … re-classifying each apply slice by its diff signature" sentence, which replaces the weaker "resolves TDD status ONCE per session" wherever that sentence exists |
 
-The canonical wording of `list-item` and `cache-sentence` comes from
-`~/.claude/claude-bk-03-07.md` (the "Strict TDD Forwarding (MANDATORY)" section),
-which is the source of truth.
+The canonical wording of `list-item` and `cache-sentence` is maintained in
+`deltas/rubric-tdd.md`, which is the overlay's source of truth.
 
-### 3. `deltas/pi-model-agnostic.md` — pi's Model Assignments, made host-agnostic
+### 4. `deltas/pi-model-agnostic.md` — pi's Model Assignments, made host-agnostic
 
 gentle-ai renders the SDD **Model Assignments** table with *Claude* aliases —
 `opus` / `sonnet` / `haiku` — into every host, pi included, together with the prose
@@ -133,11 +179,24 @@ include `model`" gate in pi's file; this sentence is the real gate.)
 
 **pi only.** See the scope note below.
 
+### 5. OpenCode Engram injection — idempotent fallback
+
+OpenCode already receives the full Engram protocol from `AGENTS.md`. Its Engram
+plugin still needs a fallback for configurations where that block is absent, but
+must not append a second protocol on every message when it is present. The overlay
+rewrites only the `experimental.chat.system.transform` prefix so it checks for the
+managed marker or protocol heading before appending `MEMORY_INSTRUCTIONS`; the
+dynamic save nudge and the rest of the plugin remain installer-managed.
+
+Pi's concrete proposal phase is named `sdd-proposal`. The Pi model-assignment
+transform normalizes stale `sdd-propose` references in `APPEND_SYSTEM.md` to that
+real agent identifier while preserving host-owned model routing.
+
 ## Host -> file -> shape map
 
 | Host | File | Persona | RUBRIC TDD |
 | --- | --- | --- | --- |
-| `claude-code` | `~/.claude/CLAUDE.md`, `~/.claude/output-styles/neutral.md` | split shape, user-managed — **not touched** | — |
+| `claude-code` | `~/.claude/CLAUDE.md`, `~/.claude/output-styles/neutral.md` | split shape — Rules + Expertise are heading-bounded; neutral style is replaced wholesale | — |
 | `claude-code` | `~/.claude/skills/_shared/sdd-orchestrator-workflow.md` | — | **prose** — this surface has no numbered list |
 | `pi` | `~/.pi/agent/APPEND_SYSTEM.md` | marker block | item 4 (same file) |
 | `opencode` | `~/.config/opencode/AGENTS.md` | marker block | — |
@@ -145,7 +204,7 @@ include `model`" gate in pi's file; this sentence is the real gate.)
 | `codex` | `~/.codex/AGENTS.md` | heading-bounded | **n/a** — template has no strict-TDD section |
 | `cursor` | `~/.cursor/rules/gentle-ai.mdc` | heading-bounded | item 4 (same file) |
 | `vscode-copilot` | `~/.config/Code/User/prompts/gentle-ai.instructions.md` | heading-bounded | item 4 (same file) |
-| `antigravity` | `~/.gemini/GEMINI.md` | marker block | item 4 (same file) |
+| `gemini-cli`, `antigravity` | `~/.gemini/GEMINI.md` | marker block | item 4 (shared file) |
 
 ### Why claude-code keeps the prose shape
 
@@ -163,20 +222,23 @@ Two persona shapes exist in the wild:
   block by markers where they exist and by heading range (`## Rules` up to the first
   `<!-- gentle-ai:` section marker) where they do not.
 - **New / split shape** (claude-code only): `CLAUDE.md` keeps Rules + Expertise +
-  Skill Loading, while Tone / Behavior / Language live in
-  `output-styles/neutral.md`. These are maintained by hand and are already correct,
-  so the overlay reports them as *already-applied* and never rewrites them.
+  Skill Loading + Persona Voice, while Tone / Behavior / Language live in
+  `output-styles/neutral.md`. The overlay replaces only Rules and Expertise in
+  `CLAUDE.md`, preserves the other two sections, and installs the canonical
+  `neutral.md` file.
 
 ## Anchors, not line numbers
 
 Generated files shift between gentle-ai versions, so nothing here is a line-number
 patch. Anchors are structural: HTML comment markers, section headings, and exact
-sentence prefixes. `apply.sh` additionally refuses to overwrite a persona region
-that does not contain exactly nine `##` sections — a guard against a template
-reshuffle silently eating unrelated content.
+sentence prefixes. `apply.sh` additionally refuses to overwrite a full-inline
+persona region that does not contain exactly nine `##` sections; the split shape
+requires its persona markers plus `## Rules` and `## Expertise`. These guards stop
+a template reshuffle from silently consuming unrelated content.
 
-If gentle-ai changes a template, the matching anchor disappears, `apply.sh` reports
-`ANCHOR-NOT-FOUND` and exits `1` instead of guessing.
+Before writing, `apply.sh` runs a global `--check` preflight. If gentle-ai changes a
+template, the matching anchor disappears, preflight reports `ANCHOR-NOT-FOUND` and
+the apply run exits `1` without modifying any host file.
 
 ## Model-assignments scope: which hosts are touched, and why
 
