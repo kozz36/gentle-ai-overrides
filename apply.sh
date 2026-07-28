@@ -552,8 +552,8 @@ init_rubric_transform() {
     *) return 1 ;;
   esac
 
-  awk -v block="$block" -v anchor="$anchor" \
-      -v open_marker="$INIT_RUBRIC_OPEN" -v close_marker="$INIT_RUBRIC_CLOSE" '
+  BLOCK="$block" ANCHOR="$anchor" OPEN_MARKER="$INIT_RUBRIC_OPEN" CLOSE_MARKER="$INIT_RUBRIC_CLOSE" \
+    awk 'BEGIN { block=ENVIRON["BLOCK"]; anchor=ENVIRON["ANCHOR"]; open_marker=ENVIRON["OPEN_MARKER"]; close_marker=ENVIRON["CLOSE_MARKER"] }
     { line[NR] = $0 }
     END {
       n = NR

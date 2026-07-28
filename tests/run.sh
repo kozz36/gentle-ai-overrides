@@ -439,7 +439,7 @@ test_init_rubric_refuses_ambiguous_or_partial_shapes() (
   mkdir -p "$(dirname -- "$skill")" "$(dirname -- "$details")" "$(dirname -- "$pi")" "$(dirname -- "$duplicate")"
 
   printf '%s\n' 'no decision anchor' > "$skill"
-  write_init_details_stock | sed '/## Output Templates/a\\## Output Templates' > "$details"
+  write_init_details_stock | awk '/^## Output Templates$/{print} {print}' > "$details"
   {
     write_pi_init_stock
     printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'partial managed block'
