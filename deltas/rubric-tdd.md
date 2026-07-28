@@ -1,15 +1,14 @@
 <!-- shape:list-item -->
 4. **Additional condition — per-work-type rubric (project-generated, this file stays project-agnostic).**
-   If the init defines a per-work-type test rubric, classify the change by its diff signature and forward
-   the MATCHING rubric row into the sub-agent prompt the SAME way — e.g. `"RUBRIC TDD: this change is
-   <type> → <the rubric's instruction for that type>"`. The rubric is the project's own (each project
-   generates it from its independent conditions in its init); do NOT hardcode any project's signatures or
-   thresholds here. A rubric row may require test-first for specific change types independently of the
-   binary — so this condition applies even when `strict_tdd` is false.
+   Only consume an active/authoritative rubric; otherwise preserve binary `strict_tdd` behavior. Classify the
+   change against ALL matching non-default rows, resolve the effective MODE by `skip < standard < strict-tdd`, union
+   their evidence/discipline requirements, and forward one effective combined instruction to the sub-agent. `default`
+   is selected ONLY when no non-default signature matches; it does not join a specific-row union. The rubric is
+   project-generated; do NOT hardcode signatures or thresholds here.
 <!-- /shape:list-item -->
 
 <!-- shape:prose -->
-If the init defines a per-work-type test rubric, classify the change by its diff signature and forward the MATCHING rubric row into the sub-agent prompt the SAME way — e.g. `"RUBRIC TDD: this change is <type> → <the rubric's instruction for that type>"`. The rubric is the project's own (each project generates it from its independent conditions in its init); do NOT hardcode any project's signatures or thresholds here. A rubric row may require test-first for specific change types independently of the binary — so this condition applies even when `strict_tdd` is false.
+Only consume an active/authoritative rubric; otherwise preserve binary `strict_tdd` behavior. Classify the change against ALL matching non-default rows, resolve the effective MODE by `skip < standard < strict-tdd`, union their evidence/discipline requirements, and forward one effective combined instruction to the sub-agent. `default` is selected ONLY when no non-default signature matches; it does not join a specific-row union. The rubric is project-generated; do NOT hardcode signatures or thresholds here.
 <!-- /shape:prose -->
 
 <!-- shape:cache-sentence -->
