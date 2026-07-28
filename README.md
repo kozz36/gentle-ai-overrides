@@ -59,7 +59,8 @@ matches a known structure. After upgrading Gentle AI:
 The regression suite runs on Ubuntu and macOS:
 
 ```sh
-bash -n apply.sh tests/run.sh
+bash -n apply.sh tests/run.sh tests/init-rubric-contract.sh
+bash tests/init-rubric-contract.sh
 bash tests/run.sh
 ```
 
@@ -146,7 +147,25 @@ The delta file carries three blocks, each fenced by `<!-- shape:NAME -->` marker
 The canonical wording of `list-item` and `cache-sentence` is maintained in
 `deltas/rubric-tdd.md`, which is the overlay's source of truth.
 
-### 4. `deltas/pi-model-agnostic.md` — pi's Model Assignments, made host-agnostic
+### 4. `deltas/sdd-init-rubric.md` — the TDD policy producer
+
+This isolated spike keeps `sdd-init` as the sole project-policy writer. It makes
+a minimal consumer wording alignment in `deltas/rubric-tdd.md` so active rubrics
+resolve all applicable rows consistently; the consumer remains read-only. The
+managed sections detect a closed set of satisfiable evidence methods, preserve
+binary `strict_tdd` when sufficient, and block on an explicit `strict|rubric`
+choice when project-specific, scope-aware rules are necessary. The standalone
+contract suite validates these static policy and delta-shape guarantees without
+loading `apply.sh`; `tests/run.sh` covers the cross-host transform behavior.
+
+The contract requires project-derived signatures, a `strict_tdd`-derived default
+row, strictest-wins matching with unioned obligations, equivalent mode-specific
+persistence, and confirmation-gated re-init drift maintenance. `apply.sh`
+installs it before the exact 2.2.0 anchors `## Decision Gates`, `## Output
+Templates`, and Pi's `## Memory Contract`; incomplete or ambiguous managed
+markers/anchors fail closed.
+
+### 5. `deltas/pi-model-agnostic.md` — pi's Model Assignments, made host-agnostic
 
 gentle-ai renders the SDD **Model Assignments** table with *Claude* aliases —
 `opus` / `sonnet` / `haiku` — into every host, pi included, together with the prose
@@ -179,7 +198,7 @@ include `model`" gate in pi's file; this sentence is the real gate.)
 
 **pi only.** See the scope note below.
 
-### 5. OpenCode Engram injection — idempotent fallback
+### 6. OpenCode Engram injection — idempotent fallback
 
 OpenCode already receives the full Engram protocol from `AGENTS.md`. Its Engram
 plugin still needs a fallback for configurations where that block is absent, but
