@@ -183,9 +183,10 @@ EOF
 )
 
 test_cli_check_semantics() (
-  local home="$TMP_ROOT/cli-home" backups="$TMP_ROOT/cli-backups" file rc
+  local home="$TMP_ROOT/cli-home" backups="$TMP_ROOT/cli-backups" file init_file rc
   file="$home/.pi/agent/APPEND_SYSTEM.md"
-  mkdir -p "$home/.gentle-ai" "$(dirname -- "$file")"
+  init_file="$home/.pi/agent/agents/sdd-init.md"
+  mkdir -p "$home/.gentle-ai" "$(dirname -- "$file")" "$(dirname -- "$init_file")"
   printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
   {
     printf '%s\n' '<!-- gentle-ai:persona -->'
@@ -198,10 +199,12 @@ test_cli_check_semantics() (
     printf '%s\n' 'Only for a selected SDD route, delegate to these phase agents: sdd-init, sdd-explore, sdd-propose, sdd-spec, sdd-design, sdd-tasks, sdd-apply, sdd-verify, sdd-archive, sdd-onboard.'
     printf '%s\n' '| `sdd-propose` | exploration (optional) | `proposal` |'
   } > "$file"
+  write_pi_init_stock > "$init_file"
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
   rc=$?
   [ "$rc" -eq 2 ] || fail "expected --check pending rc 2, got $rc" || exit 1
   [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail '--check created a backup' || exit 1
+  [ ! -e "$backups/.pi/agent/agents/sdd-init.md" ] || fail '--check created an init-agent backup' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
   rc=$?
@@ -256,6 +259,208 @@ test_installed_hosts_fallback_includes_gemini() (
   installed_hosts | grep -Fqx 'gemini-cli' || fail 'fallback host list omitted Gemini CLI' || exit 1
 )
 
+test_sdd_init_host_rows_cover_cursor_and_copilot() (
+  local home="$TMP_ROOT/skills-hosts-home" backups="$TMP_ROOT/skills-hosts-backups"
+  mkdir -p "$home"
+  load_overlay "$home" "$backups"
+  host_rows | grep -Fqx 'cursor|sdd-init-skill|.cursor/skills/sdd-init/SKILL.md' || fail 'Cursor sdd-init skill row is missing' || exit 1
+  host_rows | grep -Fqx 'cursor|sdd-init-details|.cursor/skills/sdd-init/references/init-details.md' || fail 'Cursor sdd-init details row is missing' || exit 1
+  host_rows | grep -Fqx 'vscode-copilot|sdd-init-skill|.copilot/skills/sdd-init/SKILL.md' || fail 'Copilot sdd-init skill row is missing' || exit 1
+  host_rows | grep -Fqx 'vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md' || fail 'Copilot sdd-init details row is missing' || exit 1
+)
+
+test_antigravity_skill_root_resolution() (
+  local home="$TMP_ROOT/antigravity-root-home" backups="$TMP_ROOT/antigravity-root-backups" placeholder
+  placeholder='@antigravity-skills@/sdd-init/SKILL.md'
+  mkdir -p "$home/.gemini/antigravity-cli"
+  load_overlay "$home" "$backups"
+  [ "$(resolve_target_rel antigravity "$placeholder")" = '.gemini/antigravity-cli/skills/sdd-init/SKILL.md' ] || fail 'Antigravity did not select CLI skills when desktop is absent' || exit 1
+  mkdir -p "$home/.gemini/antigravity-desktop"
+  [ "$(resolve_target_rel antigravity "$placeholder")" = '.gemini/antigravity-desktop/skills/sdd-init/SKILL.md' ] || fail 'Antigravity did not prefer desktop skills' || exit 1
+)
+
+write_init_skill_stock() {
+  cat <<'EOF'
+---
+name: sdd-init
+---
+
+Installer-owned introduction.
+
+## Decision Gates
+
+Installer-owned decisions.
+EOF
+}
+
+write_init_details_stock() {
+  cat <<'EOF'
+# SDD Init Details
+
+Installer-owned detection guidance.
+
+## Output Templates
+
+Installer-owned output guidance.
+EOF
+}
+
+write_pi_init_stock() {
+  cat <<'EOF'
+---
+name: sdd-init
+---
+
+Pi executor instructions.
+
+## Memory Contract
+
+Installer-owned persistence instructions.
+EOF
+}
+
+expect_invalid_init_rubric_delta() {
+  local fixture="$1"
+  expect_rc 1 env APPLY_SH_LIB=1 INIT_RUBRIC_FILE="$fixture" bash -c 'source "$1"' _ "$ROOT/apply.sh" || return 1
+}
+
+test_init_rubric_source_shape_refusal() (
+  local dir="$TMP_ROOT/init-source-shapes" duplicate missing unpaired nested reordered
+  mkdir -p "$dir"
+  duplicate="$dir/duplicate.md"
+  missing="$dir/missing.md"
+  unpaired="$dir/unpaired.md"
+  nested="$dir/nested.md"
+  reordered="$dir/reordered.md"
+  printf '%s\n' '<!-- shape:skill -->' 'one' '<!-- /shape:skill -->' '<!-- shape:skill -->' 'two' '<!-- /shape:skill -->' '<!-- shape:details -->' 'details' '<!-- /shape:details -->' '<!-- shape:pi -->' 'pi' '<!-- /shape:pi -->' > "$duplicate"
+  printf '%s\n' '<!-- shape:skill -->' 'skill' '<!-- /shape:skill -->' '<!-- shape:pi -->' 'pi' '<!-- /shape:pi -->' > "$missing"
+  printf '%s\n' '<!-- shape:skill -->' 'skill' '<!-- shape:details -->' 'details' '<!-- /shape:details -->' '<!-- shape:pi -->' 'pi' '<!-- /shape:pi -->' > "$unpaired"
+  printf '%s\n' '<!-- shape:skill -->' 'skill' '<!-- shape:details -->' 'details' '<!-- /shape:details -->' '<!-- /shape:skill -->' '<!-- shape:pi -->' 'pi' '<!-- /shape:pi -->' > "$nested"
+  printf '%s\n' '<!-- shape:skill -->' 'skill' '<!-- /shape:details -->' '<!-- shape:details -->' 'details' '<!-- /shape:skill -->' '<!-- shape:pi -->' 'pi' '<!-- /shape:pi -->' > "$reordered"
+  expect_invalid_init_rubric_delta "$duplicate" || exit 1
+  expect_invalid_init_rubric_delta "$missing" || exit 1
+  expect_invalid_init_rubric_delta "$unpaired" || exit 1
+  expect_invalid_init_rubric_delta "$nested" || exit 1
+  expect_invalid_init_rubric_delta "$reordered" || exit 1
+)
+
+test_init_rubric_refuses_anchor_inside_managed_section() (
+  local home="$TMP_ROOT/init-span-home" backups="$TMP_ROOT/init-span-backups" file before
+  file="$home/.config/opencode/skills/sdd-init/SKILL.md"
+  mkdir -p "$(dirname -- "$file")"
+  cat > "$file" <<'EOF'
+Before managed section.
+<!-- gentle-ai:sdd-init-rubric -->
+legacy managed content
+## Decision Gates
+legacy managed content
+<!-- /gentle-ai:sdd-init-rubric -->
+After managed section.
+EOF
+  before="$TMP_ROOT/init-span-before.md"
+  cp -- "$file" "$before"
+
+  load_overlay "$home" "$backups"
+  expect_rc 3 init_rubric_apply "$file" skill || exit 1
+  cmp -s "$file" "$before" || fail 'anchor-spanning managed section changed target' || exit 1
+  grep -Fq '## Decision Gates' "$file" || fail 'anchor-spanning target lost required anchor' || exit 1
+  [ ! -e "$backups/.config/opencode/skills/sdd-init/SKILL.md" ] || fail 'anchor-spanning refusal created a backup' || exit 1
+)
+
+test_init_rubric_shared_skill_idempotence_and_backup() (
+  local home="$TMP_ROOT/init-skill-home" backups="$TMP_ROOT/init-skill-backups" file before
+  file="$home/.config/opencode/skills/sdd-init/SKILL.md"
+  mkdir -p "$(dirname -- "$file")"
+  write_init_skill_stock > "$file"
+  chmod 640 "$file"
+  before="$TMP_ROOT/init-skill-before.md"
+  cp -- "$file" "$before"
+
+  load_overlay "$home" "$backups"
+  expect_rc 0 init_rubric_apply "$file" skill || exit 1
+  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$file" || fail 'shared skill rubric block was not inserted' || exit 1
+  grep -Fq 'single writer of project TDD policy' "$file" || fail 'shared skill lacks producer ownership contract' || exit 1
+  grep -Fq 'strictest-wins' "$file" || fail 'shared skill lacks strictest-wins contract' || exit 1
+  grep -Fq 'Installer-owned introduction.' "$file" || fail 'shared skill surrounding content changed' || exit 1
+  grep -Fq '## Decision Gates' "$file" || fail 'shared skill anchor changed' || exit 1
+  [ "$(mode_of "$file")" = 640 ] || fail 'shared skill mode changed' || exit 1
+  cmp -s "$before" "$backups/.config/opencode/skills/sdd-init/SKILL.md" || fail 'shared skill backup is not the original' || exit 1
+  expect_rc 1 init_rubric_apply "$file" skill || exit 1
+)
+
+test_init_rubric_reference_and_pi_idempotence() (
+  local home="$TMP_ROOT/init-reference-home" backups="$TMP_ROOT/init-reference-backups" reference pi
+  reference="$home/.claude/skills/sdd-init/references/init-details.md"
+  pi="$home/.pi/agent/agents/sdd-init.md"
+  mkdir -p "$(dirname -- "$reference")" "$(dirname -- "$pi")"
+  write_init_details_stock > "$reference"
+  write_pi_init_stock > "$pi"
+
+  load_overlay "$home" "$backups"
+  expect_rc 0 init_rubric_apply "$reference" details || exit 1
+  expect_rc 0 init_rubric_apply "$pi" pi || exit 1
+  grep -Fq 'closed vocabulary' "$reference" || fail 'reference lacks closed evidence vocabulary' || exit 1
+  grep -Fq 'openspec/config.yaml' "$reference" || fail 'reference lacks OpenSpec persistence contract' || exit 1
+  grep -Fq 'allowed_answers: strict|rubric' "$pi" || fail 'Pi agent lacks blocking answer domain' || exit 1
+  grep -Fq 'STOP: do not continue to downstream phases.' "$pi" || fail 'Pi agent lacks blocking stop instruction' || exit 1
+  expect_rc 1 init_rubric_apply "$reference" details || exit 1
+  expect_rc 1 init_rubric_apply "$pi" pi || exit 1
+)
+
+test_init_rubric_replaces_complete_section() (
+  local home="$TMP_ROOT/init-replace-home" backups="$TMP_ROOT/init-replace-backups" file
+  file="$home/.codex/skills/sdd-init/SKILL.md"
+  mkdir -p "$(dirname -- "$file")"
+  cat > "$file" <<'EOF'
+Before managed section.
+<!-- gentle-ai:sdd-init-rubric -->
+<!-- /gentle-ai:sdd-init-rubric -->
+
+## Decision Gates
+
+After managed section.
+EOF
+
+  load_overlay "$home" "$backups"
+  expect_rc 0 init_rubric_apply "$file" skill || exit 1
+  grep -Fq 'Before managed section.' "$file" || fail 'replacement changed preceding content' || exit 1
+  grep -Fq 'After managed section.' "$file" || fail 'replacement changed following content' || exit 1
+  grep -Fq 'stale managed content' "$file" && fail 'replacement retained stale managed content' && exit 1
+  grep -Fq 'mechanical strictest-wins MODE precedence' "$file" || fail 'replacement lacks mechanical strictest-wins contract' || exit 1
+  expect_rc 1 init_rubric_apply "$file" skill || exit 1
+)
+
+test_init_rubric_refuses_ambiguous_or_partial_shapes() (
+  local home="$TMP_ROOT/init-refusal-home" backups="$TMP_ROOT/init-refusal-backups" skill details pi duplicate before
+  skill="$home/.config/opencode/skills/sdd-init/SKILL.md"
+  details="$home/.config/opencode/skills/sdd-init/references/init-details.md"
+  pi="$home/.pi/agent/agents/sdd-init.md"
+  duplicate="$home/.claude/skills/sdd-init/SKILL.md"
+  mkdir -p "$(dirname -- "$skill")" "$(dirname -- "$details")" "$(dirname -- "$pi")" "$(dirname -- "$duplicate")"
+
+  printf '%s\n' 'no decision anchor' > "$skill"
+  write_init_details_stock | awk '/^## Output Templates$/{print} {print}' > "$details"
+  {
+    write_pi_init_stock
+    printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'partial managed block'
+  } > "$pi"
+  {
+    write_init_skill_stock
+    printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'one' '<!-- /gentle-ai:sdd-init-rubric -->'
+    printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'two' '<!-- /gentle-ai:sdd-init-rubric -->'
+  } > "$duplicate"
+  before="$TMP_ROOT/init-refusal-before.md"
+  cp -- "$pi" "$before"
+
+  load_overlay "$home" "$backups"
+  expect_rc 3 init_rubric_apply "$skill" skill || exit 1
+  expect_rc 3 init_rubric_apply "$details" details || exit 1
+  expect_rc 3 init_rubric_apply "$pi" pi || exit 1
+  expect_rc 3 init_rubric_apply "$duplicate" skill || exit 1
+  cmp -s "$pi" "$before" || fail 'partial-marker Pi target changed' || exit 1
+  [ ! -e "$backups/.pi/agent/agents/sdd-init.md" ] || fail 'refused target was backed up' || exit 1
+)
+
 run() {
   local name="$1"
   if "$name"; then
@@ -278,6 +483,16 @@ run test_symlink_refusal
 run test_backup_failure_is_closed
 run test_target_drift_is_closed
 run test_installed_hosts_fallback_includes_gemini
+run test_sdd_init_host_rows_cover_cursor_and_copilot
+run test_antigravity_skill_root_resolution
+run test_init_rubric_source_shape_refusal
+run test_init_rubric_refuses_anchor_inside_managed_section
+run test_init_rubric_shared_skill_idempotence_and_backup
+run test_init_rubric_reference_and_pi_idempotence
+run test_init_rubric_replaces_complete_section
+run test_init_rubric_refuses_ambiguous_or_partial_shapes
+
+bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

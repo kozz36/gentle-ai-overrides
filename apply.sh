@@ -27,6 +27,7 @@ PERSONA_NEUTRAL_FILE="$OVERLAY_DIR/persona/neutral-style.md"
 RUBRIC_FILE="$OVERLAY_DIR/deltas/rubric-tdd.md"
 PIMODEL_FILE="$OVERLAY_DIR/deltas/pi-model-agnostic.md"
 OPENCODE_ENGRAM_FILE="$OVERLAY_DIR/deltas/opencode-engram-idempotent.md"
+INIT_RUBRIC_FILE="${INIT_RUBRIC_FILE:-$OVERLAY_DIR/deltas/sdd-init-rubric.md}"
 STATE_JSON="$HOME/.gentle-ai/state.json"
 BACKUP_ROOT="${GENTLE_AI_BACKUP_ROOT:-$OVERLAY_DIR/backups/$(date +%Y%m%d-%H%M%S)}"
 BACKED_UP_FILES='|'
@@ -70,22 +71,37 @@ host_rows() {
 claude-code|persona-split-claude|.claude/CLAUDE.md
 claude-code|persona-split-neutral|.claude/output-styles/neutral.md
 claude-code|rubric-prose|.claude/skills/_shared/sdd-orchestrator-workflow.md
+claude-code|sdd-init-skill|.claude/skills/sdd-init/SKILL.md
+claude-code|sdd-init-details|.claude/skills/sdd-init/references/init-details.md
 pi|persona-marked|.pi/agent/APPEND_SYSTEM.md
 pi|rubric-list|.pi/agent/APPEND_SYSTEM.md
 pi|pi-models|.pi/agent/APPEND_SYSTEM.md
+pi|sdd-init-pi|.pi/agent/agents/sdd-init.md
 opencode|persona-marked|.config/opencode/AGENTS.md
 opencode|rubric-json|.config/opencode/opencode.json
 opencode|engram-idempotent|.config/opencode/plugins/engram.ts
+opencode|sdd-init-skill|.config/opencode/skills/sdd-init/SKILL.md
+opencode|sdd-init-details|.config/opencode/skills/sdd-init/references/init-details.md
 codex|persona-headed|.codex/AGENTS.md
 codex|rubric-none|.codex/AGENTS.md
+codex|sdd-init-skill|.codex/skills/sdd-init/SKILL.md
+codex|sdd-init-details|.codex/skills/sdd-init/references/init-details.md
 cursor|persona-headed|.cursor/rules/gentle-ai.mdc
 cursor|rubric-list|.cursor/rules/gentle-ai.mdc
+cursor|sdd-init-skill|.cursor/skills/sdd-init/SKILL.md
+cursor|sdd-init-details|.cursor/skills/sdd-init/references/init-details.md
 vscode-copilot|persona-headed|.config/Code/User/prompts/gentle-ai.instructions.md
 vscode-copilot|rubric-list|.config/Code/User/prompts/gentle-ai.instructions.md
+vscode-copilot|sdd-init-skill|.copilot/skills/sdd-init/SKILL.md
+vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md
 gemini-cli|persona-marked|.gemini/GEMINI.md
 gemini-cli|rubric-list|.gemini/GEMINI.md
+gemini-cli|sdd-init-skill|.gemini/skills/sdd-init/SKILL.md
+gemini-cli|sdd-init-details|.gemini/skills/sdd-init/references/init-details.md
 antigravity|persona-marked|.gemini/GEMINI.md
 antigravity|rubric-list|.gemini/GEMINI.md
+antigravity|sdd-init-skill|@antigravity-skills@/sdd-init/SKILL.md
+antigravity|sdd-init-details|@antigravity-skills@/sdd-init/references/init-details.md
 ROWS
 }
 
@@ -100,6 +116,24 @@ installed_hosts() {
     fi
   fi
   printf '%s\n' claude-code opencode pi codex cursor vscode-copilot gemini-cli antigravity
+}
+
+# v2.2.0 installs Antigravity skills below the desktop root when it exists;
+# otherwise the CLI root is authoritative. The resolved path remains subject to
+# the same regular-file and missing-file checks as every other target.
+resolve_target_rel() {
+  local host="$1" rel="$2" suffix
+  case "$host:$rel" in
+    antigravity:@antigravity-skills@/*)
+      suffix="${rel#@antigravity-skills@/}"
+      if [ -d "$HOME/.gemini/antigravity-desktop" ]; then
+        printf '%s\n' ".gemini/antigravity-desktop/skills/$suffix"
+      else
+        printf '%s\n' ".gemini/antigravity-cli/skills/$suffix"
+      fi
+      ;;
+    *) printf '%s\n' "$rel" ;;
+  esac
 }
 
 report() { printf '  %-14s %-14s %s\n' "$1" "$2" "$3"; }
@@ -337,6 +371,7 @@ persona_split_neutral_apply() {
 [ -r "$RUBRIC_FILE" ]   || { echo "FATAL: missing $RUBRIC_FILE" >&2; exit 1; }
 [ -r "$PIMODEL_FILE" ]  || { echo "FATAL: missing $PIMODEL_FILE" >&2; exit 1; }
 [ -r "$OPENCODE_ENGRAM_FILE" ] || { echo "FATAL: missing $OPENCODE_ENGRAM_FILE" >&2; exit 1; }
+[ -r "$INIT_RUBRIC_FILE" ] || { echo "FATAL: missing $INIT_RUBRIC_FILE" >&2; exit 1; }
 
 # Pull one <!-- shape:NAME --> ... <!-- /shape:NAME --> block out of a delta file.
 extract_shape_from() {
@@ -462,6 +497,107 @@ OPENCODE_ENGRAM_STOCK_BLOCK='    "experimental.chat.system.transform": async (in
 
 [ -n "$OPENCODE_ENGRAM_BLOCK" ] || {
   echo "FATAL: $OPENCODE_ENGRAM_FILE is missing the block shape" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# SDD init rubric producer contract.
+#
+# The shared SDD skill and its reference are independent installer files, while
+# Pi uses a standalone phase-agent file. All three receive a marker-delimited
+# instruction contract. The anchor and the complete marker pair must each be
+# unique: partial or ambiguous templates are refused before a backup or write.
+# ---------------------------------------------------------------------------
+# This source delta is security-sensitive input to every new producer surface.
+# Validate its complete three-shape grammar without changing legacy extractors.
+extract_init_rubric_shape() {
+  local wanted="$1"
+  awk -v wanted="$wanted" '
+    BEGIN { expected["skill"] = expected["details"] = expected["pi"] = 1 }
+    /^<!-- shape:[a-z][a-z0-9-]* -->$/ {
+      name = $0; sub(/^<!-- shape:/, "", name); sub(/ -->$/, "", name)
+      if (!(name in expected) || opened[name] || inside) bad = 1
+      else { opened[name] = 1; inside = name }
+      next
+    }
+    /^<!-- \/shape:[a-z][a-z0-9-]* -->$/ {
+      name = $0; sub(/^<!-- \/shape:/, "", name); sub(/ -->$/, "", name)
+      if (!(name in expected) || !inside || name != inside || closed[name]) bad = 1
+      else { closed[name] = 1; inside = "" }
+      next
+    }
+    /<!--[ ]*\/?shape:/ { bad = 1; next }
+    { if (inside == wanted) body = body (body == "" ? "" : "\n") $0 }
+    END {
+      for (name in expected) if (opened[name] != 1 || closed[name] != 1) bad = 1
+      if (bad || inside || body == "") exit 1
+      print body
+    }
+  ' "$INIT_RUBRIC_FILE"
+}
+
+INIT_RUBRIC_SKILL="$(extract_init_rubric_shape skill)" || { echo "FATAL: invalid $INIT_RUBRIC_FILE shape markers" >&2; exit 1; }
+INIT_RUBRIC_DETAILS="$(extract_init_rubric_shape details)" || { echo "FATAL: invalid $INIT_RUBRIC_FILE shape markers" >&2; exit 1; }
+INIT_RUBRIC_PI="$(extract_init_rubric_shape pi)" || { echo "FATAL: invalid $INIT_RUBRIC_FILE shape markers" >&2; exit 1; }
+INIT_RUBRIC_OPEN='<!-- gentle-ai:sdd-init-rubric -->'
+INIT_RUBRIC_CLOSE='<!-- /gentle-ai:sdd-init-rubric -->'
+
+[ -n "$INIT_RUBRIC_SKILL" ] && [ -n "$INIT_RUBRIC_DETAILS" ] && [ -n "$INIT_RUBRIC_PI" ] || {
+  echo "FATAL: $INIT_RUBRIC_FILE is missing one of the shape blocks" >&2; exit 1; }
+
+init_rubric_transform() {
+  local shape="$1" block anchor
+  case "$shape" in
+    skill) block="$INIT_RUBRIC_SKILL"; anchor='## Decision Gates' ;;
+    details) block="$INIT_RUBRIC_DETAILS"; anchor='## Output Templates' ;;
+    pi) block="$INIT_RUBRIC_PI"; anchor='## Memory Contract' ;;
+    *) return 1 ;;
+  esac
+
+  BLOCK="$block" ANCHOR="$anchor" OPEN_MARKER="$INIT_RUBRIC_OPEN" CLOSE_MARKER="$INIT_RUBRIC_CLOSE" \
+    awk 'BEGIN { block=ENVIRON["BLOCK"]; anchor=ENVIRON["ANCHOR"]; open_marker=ENVIRON["OPEN_MARKER"]; close_marker=ENVIRON["CLOSE_MARKER"] }
+    { line[NR] = $0 }
+    END {
+      n = NR
+      for (i = 1; i <= n; i++) {
+        if (line[i] == anchor) { anchors++; anchor_line = i }
+        if (line[i] == open_marker) { opens++; open_line = i }
+        if (line[i] == close_marker) { closes++; close_line = i }
+      }
+      if (anchors != 1 || opens != closes || opens > 1 || (opens == 1 && open_line >= close_line) || \
+          (opens == 1 && anchor_line > open_line && anchor_line < close_line)) exit 1
+
+      for (i = 1; i <= n; i++) {
+        if (line[i] == anchor) { print block; print "" }
+        if (opens == 1 && i > open_line && i < close_line) continue
+        if (opens == 1 && i == open_line) continue
+        if (opens == 1 && i == close_line) continue
+        # The canonical block owns one separator before its anchor. Drop only
+        # that exact generated separator so replacement stays byte-idempotent.
+        if (opens == 1 && i == close_line + 1 && line[i] ~ /^[ \t]*$/ && line[i + 1] == anchor) continue
+        print line[i]
+      }
+      exit 0
+    }
+  '
+}
+
+init_rubric_apply() {
+  local file="$1" shape="$2" tmp snapshot rc
+  tmp="$(target_tmp "$file")" || return 4
+  snapshot="$(target_tmp "$file")" || { rm -f -- "$tmp"; return 4; }
+  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
+    rm -f -- "$tmp" "$snapshot"; return 4
+  fi
+  if ! init_rubric_transform "$shape" < "$snapshot" > "$tmp"; then
+    rm -f -- "$tmp" "$snapshot"; return 3
+  fi
+  if cmp -s "$tmp" "$snapshot"; then
+    rm -f -- "$tmp" "$snapshot"; return 1
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$tmp" "$snapshot"; return 0; fi
+  commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
+  rm -f -- "$tmp" "$snapshot"
+  return "$rc"
+}
 
 PI_MARK_OPEN='<!-- gentle-ai:sdd-model-assignments -->'
 PI_MARK_CLOSE='<!-- /gentle-ai:sdd-model-assignments -->'
@@ -693,6 +829,7 @@ while IFS= read -r host; do
   while IFS='|' read -r h surface rel; do
     [ "$h" = "$host" ] || continue
     matched=1
+    rel="$(resolve_target_rel "$host" "$rel")"
     file="$HOME/$rel"
     short="${rel}"
 
@@ -778,6 +915,23 @@ while IFS= read -r host; do
           4) report "WRITE-FAILED" "engram" "$short (idempotent injection)"; OPERATION_FAILED=1 ;;
           5) report "TARGET-DRIFT" "engram" "$short (idempotent injection)"; TARGET_DRIFT=1 ;;
           *) report "WRITE-FAILED" "engram" "$short (idempotent injection)"; OPERATION_FAILED=1 ;;
+        esac
+        ;;
+      sdd-init-skill|sdd-init-details|sdd-init-pi)
+        case "$surface" in
+          sdd-init-skill) shape=skill ;;
+          sdd-init-details) shape=details ;;
+          sdd-init-pi) shape=pi ;;
+        esac
+        init_rubric_apply "$file" "$shape"; rc=$?
+        case "$rc" in
+          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "sdd-init-rubric" "$short"; PENDING=1
+             else report "applied" "sdd-init-rubric" "$short"; CHANGED=1; fi ;;
+          1) report "already-applied" "sdd-init-rubric" "$short" ;;
+          3) report "ANCHOR-NOT-FOUND" "sdd-init-rubric" "$short"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "sdd-init-rubric" "$short"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "sdd-init-rubric" "$short"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "sdd-init-rubric" "$short"; OPERATION_FAILED=1 ;;
         esac
         ;;
       rubric-none)
