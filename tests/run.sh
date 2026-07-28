@@ -182,6 +182,129 @@ EOF
   expect_rc 1 pimodel_apply "$file" || exit 1
 )
 
+test_rubric_list_replaces_legacy_item4() (
+  local home="$TMP_ROOT/rubric-list-home" backups="$TMP_ROOT/rubric-list-backups" md json loose before json_before transformed expected loose_expected
+  md="$home/.pi/agent/APPEND_SYSTEM.md"
+  json="$home/.config/opencode/opencode.json"
+  loose="$home/.pi/agent/LEGACY_PROSE.md"
+  before="$TMP_ROOT/rubric-list-before.md"
+  json_before="$TMP_ROOT/rubric-list-before.json"
+  transformed="$TMP_ROOT/rubric-list-transformed.md"
+  expected="$TMP_ROOT/rubric-list-expected.md"
+  loose_expected="$TMP_ROOT/rubric-list-loose-expected.md"
+  mkdir -p "$(dirname -- "$md")" "$(dirname -- "$json")"
+  cat > "$md" <<'EOF'
+Before the strict-TDD forwarding list.
+3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction
+4. **Additional condition — per-work-type rubric (project-generated, this file stays project-agnostic).**
+   Only consume an active/authoritative rubric; otherwise preserve binary `strict_tdd` behavior. Classify the
+   change against the matching rubric row and forward its instruction to the sub-agent.
+5. Subsequent numbered-list item must survive unchanged.
+The orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.
+Following cache prose must survive unchanged.
+EOF
+  cp -- "$md" "$before"
+
+  load_overlay "$home" "$backups"
+  {
+    printf '%s\n' 'Before the strict-TDD forwarding list.'
+    printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction'
+    printf '%s\n' "$RUBRIC_ITEM4"
+    printf '%s\n' '5. Subsequent numbered-list item must survive unchanged.'
+    printf '%s\n' "$CACHE_NEW"
+    printf '%s\n' 'Following cache prose must survive unchanged.'
+  } > "$expected"
+
+  rubric_transform_list < "$md" > "$transformed" || fail 'legacy list transform refused a valid fixture' || exit 1
+  cmp -s "$transformed" "$expected" || fail 'legacy list transform did not replace the complete item 4 block' || exit 1
+  grep -Fq 'matching rubric row' "$transformed" && fail 'legacy item 4 body survived transform' && exit 1
+  grep -Fq '5. Subsequent numbered-list item must survive unchanged.' "$transformed" || fail 'transform consumed item 5' || exit 1
+  grep -Fq 'Following cache prose must survive unchanged.' "$transformed" || fail 'transform consumed following cache prose' || exit 1
+
+  CHECK_ONLY=1
+  expect_rc 0 rubric_apply_md "$md" list || exit 1
+  cmp -s "$md" "$before" || fail 'Markdown rubric check changed its target' || exit 1
+  CHECK_ONLY=0
+  expect_rc 0 rubric_apply_md "$md" list || exit 1
+  cmp -s "$md" "$expected" || fail 'Markdown rubric apply did not install canonical content' || exit 1
+  expect_rc 1 rubric_apply_md "$md" list || exit 1
+
+  jq -n --rawfile prompt "$before" '{agent: {"gentle-orchestrator": {prompt: $prompt}}}' > "$json"
+  cp -- "$json" "$json_before"
+  CHECK_ONLY=1
+  expect_rc 0 rubric_apply_json "$json" || exit 1
+  cmp -s "$json" "$json_before" || fail 'JSON rubric check changed its target' || exit 1
+  CHECK_ONLY=0
+  expect_rc 0 rubric_apply_json "$json" || exit 1
+  jq -e --rawfile expected "$expected" '.agent["gentle-orchestrator"].prompt == $expected' "$json" >/dev/null || fail 'JSON rubric apply did not install canonical content' || exit 1
+  expect_rc 1 rubric_apply_json "$json" || exit 1
+
+  {
+    printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction' '' "$RUBRIC_PROSE" '' "$CACHE_OLD"
+  } > "$loose"
+  {
+    printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction' "$RUBRIC_ITEM4" '' "$CACHE_NEW"
+  } > "$loose_expected"
+  rubric_transform_list < "$loose" > "$transformed" || fail 'legacy loose paragraph transform refused a valid fixture' || exit 1
+  cmp -s "$transformed" "$loose_expected" || fail 'legacy loose paragraph was not migrated' || exit 1
+)
+
+test_rubric_list_refuses_ambiguous_headings() (
+  local home="$TMP_ROOT/rubric-refusal-home" backups="$TMP_ROOT/rubric-refusal-backups" duplicate out_of_order after_item5 blank_separated prose_intervening before output
+  duplicate="$home/.pi/agent/APPEND_SYSTEM.md"
+  out_of_order="$home/.pi/agent/OUT_OF_ORDER.md"
+  after_item5="$home/.pi/agent/AFTER_ITEM5.md"
+  blank_separated="$home/.pi/agent/BLANK_SEPARATED.md"
+  prose_intervening="$home/.pi/agent/PROSE_INTERVENING.md"
+  before="$TMP_ROOT/rubric-refusal-before.md"
+  output="$TMP_ROOT/rubric-refusal-output.md"
+  mkdir -p "$(dirname -- "$duplicate")"
+
+  load_overlay "$home" "$backups"
+  {
+    printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction'
+    printf '%s\n' "$RUBRIC_ITEM4"
+    printf '%s\n' "$RUBRIC_ITEM4"
+  } > "$duplicate"
+  cp -- "$duplicate" "$before"
+  rubric_transform_list < "$duplicate" > "$output" && fail 'duplicate item 4 headings were transformed' && exit 1
+  expect_rc 3 rubric_apply_md "$duplicate" list || exit 1
+  cmp -s "$duplicate" "$before" || fail 'duplicate item 4 target changed' || exit 1
+
+  {
+    printf '%s\n' "$RUBRIC_ITEM4"
+    printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction'
+  } > "$out_of_order"
+  rubric_transform_list < "$out_of_order" > "$output" && fail 'item 4 before item 3 was transformed' && exit 1
+  expect_rc 3 rubric_apply_md "$out_of_order" list || exit 1
+
+  {
+    printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction'
+    printf '%s\n' '5. A later numbered-list item.'
+    printf '%s\n' "$RUBRIC_ITEM4"
+  } > "$after_item5"
+  cp -- "$after_item5" "$before"
+  rubric_transform_list < "$after_item5" > "$output" && fail 'item 4 after item 5 was transformed' && exit 1
+  expect_rc 3 rubric_apply_md "$after_item5" list || exit 1
+  cmp -s "$after_item5" "$before" || fail 'item 4 after item 5 target changed' || exit 1
+  [ ! -e "$backups/.pi/agent/AFTER_ITEM5.md" ] || fail 'item 4 after item 5 refusal created a backup' || exit 1
+
+  {
+    printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction' '' "$RUBRIC_ITEM4"
+  } > "$blank_separated"
+  cp -- "$blank_separated" "$before"
+  rubric_transform_list < "$blank_separated" > "$output" && fail 'blank-separated item 4 was transformed' && exit 1
+  expect_rc 3 rubric_apply_md "$blank_separated" list || exit 1
+  cmp -s "$blank_separated" "$before" || fail 'blank-separated item 4 target changed' || exit 1
+  [ ! -e "$backups/.pi/agent/BLANK_SEPARATED.md" ] || fail 'blank-separated refusal created a backup' || exit 1
+
+  {
+    printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction' 'Intervening prose.' "$RUBRIC_ITEM4"
+  } > "$prose_intervening"
+  rubric_transform_list < "$prose_intervening" > "$output" && fail 'prose-intervening item 4 was transformed' && exit 1
+  expect_rc 3 rubric_apply_md "$prose_intervening" list || exit 1
+)
+
 test_cli_check_semantics() (
   local home="$TMP_ROOT/cli-home" backups="$TMP_ROOT/cli-backups" file init_file rc
   file="$home/.pi/agent/APPEND_SYSTEM.md"
@@ -193,6 +316,10 @@ test_cli_check_semantics() (
     cat "$ROOT/persona/persona-block.md"
     printf '%s\n' '<!-- /gentle-ai:persona -->'
     printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction'
+    printf '%s\n' '4. **Additional condition — per-work-type rubric (project-generated, this file stays project-agnostic).**'
+    printf '%s\n' '   Classify the change against the matching rubric row and forward its instruction to the sub-agent.'
+    printf '%s\n' 'The orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.'
+    printf '%s\n' 'Following cache prose must survive unchanged.'
     printf '%s\n' '<!-- gentle-ai:sdd-model-assignments -->' 'legacy model assignments' '<!-- /gentle-ai:sdd-model-assignments -->'
     printf '%s\n' 'The orchestrator resolves skills from the registry ONCE and passes model aliases.'
     printf '%s\n' 'Before the `sdd-propose` phase in interactive mode, offer the user a proposal question round.'
@@ -206,6 +333,9 @@ test_cli_check_semantics() (
   [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail '--check created a backup' || exit 1
   [ ! -e "$backups/.pi/agent/agents/sdd-init.md" ] || fail '--check created an init-agent backup' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
+  grep -Fq 'matching rubric row and forward' "$file" && fail 'CLI retained stale item 4 body' && exit 1
+  grep -Fq 'change against ALL matching non-default rows' "$file" || fail 'CLI did not install current item 4 body' || exit 1
+  grep -Fq 'Following cache prose must survive unchanged.' "$file" || fail 'CLI consumed following cache prose' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
   rc=$?
   [ "$rc" -eq 0 ] || fail "expected clean --check rc 0, got $rc" || exit 1
@@ -478,6 +608,8 @@ run test_claude_duplicate_markers
 run test_opencode_stock_and_guarded_noop
 run test_opencode_refuses_custom_body
 run test_pi_exact_sdd_proposal
+run test_rubric_list_replaces_legacy_item4
+run test_rubric_list_refuses_ambiguous_headings
 run test_cli_check_semantics
 run test_symlink_refusal
 run test_backup_failure_is_closed

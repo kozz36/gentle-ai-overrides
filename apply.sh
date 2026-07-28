@@ -391,7 +391,7 @@ CACHE_NEW="$(extract_shape cache-sentence)"
 [ -n "$RUBRIC_ITEM4" ] && [ -n "$RUBRIC_PROSE" ] && [ -n "$CACHE_NEW" ] || {
   echo "FATAL: $RUBRIC_FILE is missing one of the shape blocks" >&2; exit 1; }
 
-# First line of item 4 -- the marker used to detect "the numbered form is here".
+# First line of item 4 -- the marker used to locate the numbered-list block.
 RUBRIC_ITEM4_HEAD="$(printf '%s\n' "$RUBRIC_ITEM4" | head -1)"
 
 # Anchor: last item of the numbered list. Item 4 is appended directly after it.
@@ -407,7 +407,8 @@ ANCHOR_PROSE='When launching `sdd-apply` or `sdd-verify`, search for testing cap
 CACHE_OLD='The orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.'
 
 # Transform for hosts WITH the numbered list. Idempotent:
-#   - inserts item 4 after item 3 only if item 4 is not already there
+#   - inserts item 4 after item 3 when item 4 is absent
+#   - replaces an existing item 4 and its indented continuation lines
 #   - drops the legacy loose paragraph (and the blank line it leaves behind)
 #   - upgrades the caching sentence only where the weak one exists
 # Exits 1 if the list anchor is gone (gentle-ai reshaped the template).
@@ -423,11 +424,12 @@ rubric_transform_list() {
     END {
       n = NR
       for (i = 1; i <= n; i++) {
-        if (!anchor && index(line[i], a3) == 1)   anchor = i    # end of the numbered list
-        if (!have4  && index(line[i], head) == 1) have4  = i    # item 4 already present
+        if (!anchor && index(line[i], a3) == 1) anchor = i      # end of the numbered list
+        if (index(line[i], head) == 1) { have4++; item4_at = i }
         if (!loose  && line[i] == prose)          loose  = i    # legacy loose paragraph
       }
       if (!anchor) exit 1                                       # template changed -> refuse
+      if (have4 > 1 || (have4 && item4_at != anchor + 1)) exit 1 # item 4 must immediately follow item 3
 
       if (loose) {
         drop[loose] = 1
@@ -437,7 +439,17 @@ rubric_transform_list() {
       }
 
       for (i = 1; i <= n; i++) {
+        if (replace4) {
+          # A list item ends at the next non-indented nonblank line.
+          if (line[i] ~ /^[^ \t]/) replace4 = 0
+          else continue
+        }
         if (drop[i]) continue
+        if (i == item4_at) {
+          print item4
+          replace4 = 1
+          continue
+        }
         print (line[i] == c_old) ? c_new : line[i]
         if (i == anchor && !have4) print item4                  # item 4 joins the list
       }
