@@ -711,6 +711,10 @@ bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL
 bash "$ROOT/tests/rubric-compiler-core.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 bash "$ROOT/tests/rubric-engram-recovery.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 bash "$ROOT/tests/rubric-consumer-gate.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-benchmark.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-semantic-evaluation.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-multi-project-benchmark.sh" --self-test && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-multi-project-benchmark.sh" --predictions "$ROOT/tests/fixtures/rubric-compiler/multi-project/predictions-v1.tsv" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
