@@ -1,0 +1,19 @@
+# schema: rubric-compiler-multi-project-tasks/v1
+# Producer-facing historical corpus. It contains no labels or scoring rationale.
+task_id	project	task_description	source_reference	commit	date	path_category
+cnsic-h001	cnsic	Support disposition and retirement of quarantined units.	cnsic-read-only-history	44924bd44e5d5ef2b08e51f17a4193c69f72028e	2026-07-27	backend-api-db
+cnsic-h002	cnsic	Add the REINGRESO return flow across service router audit and queries.	cnsic-read-only-history	12e5c6d01d0055e68e591869b4448568d0cbfab8	2026-07-25	backend-api-db
+cnsic-h003	cnsic	Preserve the project identifier while deriving a REINGRESO ledger record.	cnsic-read-only-history	af68a281e433f05ff8c24c5b4e757b5ac8b9ed94	2026-07-26	backend-service-db
+cnsic-h004	cnsic	Derive the REINGRESO unit identifier from ledger history rather than current location.	cnsic-read-only-history	9aecb750e0ccc9fac1fde973811c1f11ad7d9af1	2026-07-25	backend-service-db
+cnsic-h005	cnsic	Add a read surface for the conteo worksheet.	cnsic-read-only-history	7579710819f143124000393ae63c2be4564835d0	2026-07-27	backend-api-db
+cnsic-h006	cnsic	Extract quality-control matrix result types into a dedicated module.	cnsic-read-only-history	d695c6d5b1bde15f76d0b6dea3139d0f3c3397df	2026-07-27	backend-refactor
+cnsic-h007	cnsic	Make the test collection hook degrade gracefully instead of terminating the session.	cnsic-read-only-history	97ad1a5e941b5986526bd52314ad6571589fe989	2026-07-27	test-infrastructure
+cnsic-h008	cnsic	Prevent a heredoc marker from hiding a real mutation.	cnsic-read-only-history	b14ed75c64a50ee16d8a11df280d3ad5f2a8c7e2	2026-07-26	developer-hook
+gentle-h001	gentle-ai	Document a read-only task workaround for OpenCode.	gentle-ai-public-history	43205eb3ddf6f7f80b091af36aa67289abb00c6c	2026-07-30	documentation
+gentle-h002	gentle-ai	Scale immutable path admission handling.	gentle-ai-public-history	0d14beff9f1663a0cf131128902233604136d4c4	2026-07-30	go-cli-review
+gentle-h003	gentle-ai	Use neutral admission-rejection guidance in OpenCode.	gentle-ai-public-history	5fe7520410a344f0d317e069121933d755e6d1ba	2026-07-31	plugin-asset
+gentle-h004	gentle-ai	Reject directory references used as review evidence.	gentle-ai-public-history	011ff3a9fc3c4d00f8ee19d778c69676e59e1771	2026-07-30	go-review-admission
+gentle-h005	gentle-ai	Report blocked provider defects without exposing unsafe details.	gentle-ai-public-history	0d49f29d3bd67437a44facea5625934bace3bee9	2026-07-30	orchestrator-assets
+gentle-h006	gentle-ai	Complete declined-candidate delivery behavior.	gentle-ai-public-history	306316bcf93fdd61fc50f0a493e3c45cf0751d59	2026-07-30	go-cli-review
+gentle-h007	gentle-ai	Remove an unreachable decline helper.	gentle-ai-public-history	dcac470412998253d1bfbd41f233c54920026d17	2026-07-30	go-refactor
+gentle-h008	gentle-ai	Authorize delivery of declined candidates.	gentle-ai-public-history	30cd2aadb110c0334c3eaa9c3667686c45185518	2026-07-30	go-cli-review

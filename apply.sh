@@ -62,6 +62,8 @@ CHANGED=0
 #                    -> the loose-paragraph shape is the only one that fits
 #   rubric-json      opencode.json -> .agent["gentle-orchestrator"].prompt (carries the list)
 #   rubric-none      host has no strict-TDD forwarding section; nothing to inject
+#   sdd-init-prompt  OpenCode's hidden agent entrypoint, distinct from its
+#                    skill/manual support files
 #   pi-models        pi's sdd-model-assignments block -> host-agnostic `inherit`
 #                    (pi routes phases via ~/.pi/gentle-ai/models.json; the Claude
 #                     aliases gentle-ai renders there are unresolvable). pi ONLY.
@@ -82,6 +84,7 @@ opencode|rubric-json|.config/opencode/opencode.json
 opencode|engram-idempotent|.config/opencode/plugins/engram.ts
 opencode|sdd-init-skill|.config/opencode/skills/sdd-init/SKILL.md
 opencode|sdd-init-details|.config/opencode/skills/sdd-init/references/init-details.md
+opencode|sdd-init-prompt|.config/opencode/prompts/sdd/sdd-init.md
 codex|persona-headed|.codex/AGENTS.md
 codex|rubric-none|.codex/AGENTS.md
 codex|sdd-init-skill|.codex/skills/sdd-init/SKILL.md
@@ -929,11 +932,12 @@ while IFS= read -r host; do
           *) report "WRITE-FAILED" "engram" "$short (idempotent injection)"; OPERATION_FAILED=1 ;;
         esac
         ;;
-      sdd-init-skill|sdd-init-details|sdd-init-pi)
+      sdd-init-skill|sdd-init-details|sdd-init-pi|sdd-init-prompt)
         case "$surface" in
           sdd-init-skill) shape=skill ;;
           sdd-init-details) shape=details ;;
           sdd-init-pi) shape=pi ;;
+          sdd-init-prompt) shape=skill ;;
         esac
         init_rubric_apply "$file" "$shape"; rc=$?
         case "$rc" in

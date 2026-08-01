@@ -1,0 +1,20 @@
+# schema: rubric-compiler-multi-project-labels/v1
+# task_fixture_sha256: 2a08207c4a0bb299c702bba453326c9d4ca7beeee6ff20ef8a635f5e759d920b
+# Scorer-only maintainer authority. Producers must not receive this file.
+task_id	expected_mode	expected_evidence	label_status	label_provenance	label_revision
+cnsic-h001	strict-tdd	backend-unit,backend-integration	confirmed	maintainer-approved	2026-08-01
+cnsic-h002	strict-tdd	backend-unit,backend-integration	confirmed	maintainer-approved	2026-08-01
+cnsic-h003	strict-tdd	backend-unit,backend-integration	confirmed	maintainer-approved	2026-08-01
+cnsic-h004	strict-tdd	backend-unit,backend-integration	confirmed	maintainer-approved	2026-08-01
+cnsic-h005	strict-tdd	backend-unit,backend-integration	confirmed	maintainer-approved	2026-08-01
+cnsic-h006	standard	backend-unit	confirmed	maintainer-approved	2026-08-01
+cnsic-h007	ambiguous		confirmed	maintainer-approved	2026-08-01
+cnsic-h008	ambiguous		confirmed	maintainer-approved	2026-08-01
+gentle-h001	skip		confirmed	maintainer-approved	2026-08-01
+gentle-h002	strict-tdd	go-unit,go-build	confirmed	maintainer-approved	2026-08-01
+gentle-h003	strict-tdd	go-unit,go-build	confirmed	maintainer-approved	2026-08-01
+gentle-h004	strict-tdd	go-unit,go-build	confirmed	maintainer-approved	2026-08-01
+gentle-h005	strict-tdd	go-unit,go-build	confirmed	maintainer-approved	2026-08-01
+gentle-h006	strict-tdd	go-unit,go-build	confirmed	maintainer-approved	2026-08-01
+gentle-h007	standard	go-unit,go-build	confirmed	maintainer-approved	2026-08-01
+gentle-h008	strict-tdd	go-unit,go-build	confirmed	maintainer-approved	2026-08-01
