@@ -13,6 +13,8 @@
 - The canonical compiler is the only producer that may activate a rubric. It extracts project-declared testing evidence into normalized `EvidenceV1` records (`id`, `scope`, `method`, `command`, `command_declaration`, `tool_proof`), derives `CandidateV1` rows and `QuestionV1` blocking questions, and fails closed on missing, duplicate, ambiguous, or unbound fields. Candidate rows remain pending and OpenSpec remains unchanged until a maintainer supplies `ConfirmationV1` for the exact candidate digest and answers every blocking question.
 - On confirmed `rubric`, serialize one deterministic `CanonicalPolicyModelV1`: length-frame and sort evidence, bindings, rows, questions, and confirmations by stable id; bind its `cksum` digest into both the OpenSpec transaction and `ResolutionV1`. Do not activate directly from conversational prose or an unnormalized candidate.
 - OpenSpec activation is one transaction: validate exactly one `testing:` mapping and zero or one complete managed marker pair; render a same-directory temporary replacement; validate it; atomically rename it; then independently re-open and parse the installed file. Publish `ResolutionV1` only after readback confirms `state=active`, `authority=openspec`, one matching transaction id, and matching canonical-model and backend-config digests.
+- Engram canonical persistence uses exactly the project topic `sdd-init/{project}`. Bind the transaction id, canonical-model digest, payload digest, predecessor and committed backend revisions, then independently read the stored artifact and verify every bound value before reporting active.
+- Hybrid mode writes equivalent canonical-model and transaction data to OpenSpec and Engram, but OpenSpec remains the `ResolutionV1` authority. A partial publication never falls back: record `recovery-required`, retain the preimage/revision evidence, compensate both surfaces, independently verify recovery, and resume only from that verified recovery state.
 <!-- /gentle-ai:sdd-init-rubric -->
 <!-- /shape:skill -->
 
@@ -74,6 +76,14 @@ readback=verified
 ```
 
 If any preflight, write, rename, or readback step fails, report no active resolution and leave the original OpenSpec file unchanged.
+
+### Engram And Hybrid Recovery
+
+Persist the canonical model only at `sdd-init/{project}`; reject a global, substituted, or ambiguous topic. The Engram artifact is `ActivationStateV1` and binds `txn_id`, `canonical_model_digest`, `backend_payload_digest`, predecessor revision, committed revision, backend revision, and `readback=verified`. Write staging then active states with compare-and-put semantics. Independently fetch the exact topic after each write; a returned revision, payload, model digest, transaction, state, or readback mismatch is not active.
+
+Hybrid mode first verifies active OpenSpec `ResolutionV1`, then writes the equivalent Engram artifact. The final hybrid resolution remains `authority=openspec` and must bind the same transaction and canonical-model digest on both backends. Never use an Engram revision as authority for OpenSpec policy.
+
+If either hybrid phase fails after a write, persist `recovery-required` with the exact transaction, topic, preimage presence/content digest, and backend revisions. Do not resume normal activation while that state exists. Recovery compensates to the recorded preimages, independently verifies both restored surfaces, then records verified recovery; only that terminal state may start a new activation.
 
 ### Persistence And Re-init
 
@@ -162,6 +172,8 @@ Signatures classify production implementation/work-type diffs (source, boundary/
 OpenSpec writes this canonical active schema exactly; testing.rubric.active is the only active OpenSpec path. Reject alternate active keys such as `rubric_status`; Re-init reads only `testing.rubric.active`. The consumer stays path-agnostic and consumes active/authoritative data only.
 
 Use the canonical compiler before activation. Normalize evidence as `EvidenceV1`; derive `CandidateV1` rows and `QuestionV1` blocking questions; and reject missing, duplicate, ambiguous, unresolved, or cross-scope records. Candidates remain pending and OpenSpec remains unchanged until a maintainer supplies `ConfirmationV1` for the exact candidate digest and answers every blocking question. Serialize one stable-id, length-framed `CanonicalPolicyModelV1`, bind its `cksum` digest to the transaction, then perform OpenSpec activation through a same-directory temporary replacement, atomic rename, and independent readback. Emit `ResolutionV1` only when readback proves the active OpenSpec authority and matching transaction, canonical-model, and backend-config digests.
+
+For Engram, persist only at `sdd-init/{project}` and bind transaction, canonical-model/payload digest, predecessor and committed backend revisions, and independent readback in `ActivationStateV1`. Hybrid first verifies active OpenSpec and keeps it as `ResolutionV1` authority; its Engram model and transaction must be equivalent. A partial write records `recovery-required` with preimage/revision evidence, compensates and independently verifies recovery, and cannot resume activation before verified recovery.
 
 ```yaml
 strict_tdd: false
