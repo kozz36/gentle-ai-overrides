@@ -89,12 +89,11 @@ test_policy_contract() (
   local init="$ROOT/deltas/sdd-init-rubric.md" consumer="$ROOT/deltas/rubric-tdd.md"
   assert_project_declared_satisfiability "$init" 'sdd-init delta' || exit 1
   assert_policy_contract "$init" 'sdd-init delta' || exit 1
-  grep -Fq 'ALL matching non-default rows' "$consumer" || fail 'consumer still selects one matching row' || exit 1
-  grep -Fq 'effective MODE' "$consumer" || fail 'consumer lacks effective mode resolution' || exit 1
-  grep -Fq '`skip < standard < strict-tdd`' "$consumer" || fail 'consumer lacks closed mode precedence' || exit 1
-  grep -Fq 'union their evidence/discipline requirements' "$consumer" || fail 'consumer lacks evidence union' || exit 1
-  grep -Fq 'Only consume an active/authoritative rubric' "$consumer" || fail 'consumer accepts inactive rubrics' || exit 1
-  grep -Fq '`default` is selected ONLY when no non-default signature matches' "$consumer" || fail 'consumer unions default with specific rows' || exit 1
+  grep -Fq 'RubricConsumerEnvelopeV1' "$consumer" || fail 'consumer lacks the state-gate envelope' || exit 1
+  grep -Fq 'sole resolution owner' "$consumer" || fail 'consumer permits downstream resolution' || exit 1
+  grep -Fq 'RubricConsumerBlockedV1' "$consumer" || fail 'consumer lacks the blocked state-gate envelope' || exit 1
+  grep -Fq 'never fall back to rubric `default` or binary `strict_tdd`' "$consumer" || fail 'consumer permits fallback after rubric observation' || exit 1
+  grep -Fq 'only when no rubric state has ever been observed' "$consumer" || fail 'consumer lacks the legacy boundary' || exit 1
 )
 
 test_delta_shape_grammar() (
