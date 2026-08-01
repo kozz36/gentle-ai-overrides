@@ -334,7 +334,8 @@ test_cli_check_semantics() (
   [ ! -e "$backups/.pi/agent/agents/sdd-init.md" ] || fail '--check created an init-agent backup' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
   grep -Fq 'matching rubric row and forward' "$file" && fail 'CLI retained stale item 4 body' && exit 1
-  grep -Fq 'change against ALL matching non-default rows' "$file" || fail 'CLI did not install current item 4 body' || exit 1
+  grep -Fq 'RubricConsumerEnvelopeV1' "$file" || fail 'CLI did not install consumer envelope wording' || exit 1
+  grep -Fq 'never fall back to rubric `default` or binary `strict_tdd`' "$file" || fail 'CLI did not install fail-closed fallback wording' || exit 1
   grep -Fq 'Following cache prose must survive unchanged.' "$file" || fail 'CLI consumed following cache prose' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
   rc=$?
@@ -707,6 +708,13 @@ run test_init_rubric_replaces_complete_section
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
 
 bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-core.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-engram-recovery.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-consumer-gate.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-benchmark.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-semantic-evaluation.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-multi-project-benchmark.sh" --self-test && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-multi-project-benchmark.sh" --predictions "$ROOT/tests/fixtures/rubric-compiler/multi-project/predictions-v1.tsv" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
