@@ -398,10 +398,9 @@ test_sdd_init_host_rows_cover_cursor_and_copilot() (
   host_rows | grep -Fqx 'cursor|sdd-init-details|.cursor/skills/sdd-init/references/init-details.md' || fail 'Cursor sdd-init details row is missing' || exit 1
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-skill|.copilot/skills/sdd-init/SKILL.md' || fail 'Copilot sdd-init skill row is missing' || exit 1
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md' || fail 'Copilot sdd-init details row is missing' || exit 1
-  host_rows | grep -Fqx 'claude-code|persona-split-style|.claude/output-styles/gentleman.md' || fail 'Claude gentleman style row is missing' || exit 1
+  host_rows | grep -Fqx 'claude-code|persona-split-style|@claude-output-style@' || fail 'Claude selected style row is missing' || exit 1
   host_rows | grep -Fqx 'pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md' || fail 'Pi packaged sdd-init asset row is missing' || exit 1
   host_rows | grep -Fqx 'opencode|sdd-init-delegation|.config/opencode/opencode.json' || fail 'OpenCode inline sdd-init delegation row is missing' || exit 1
-  ! host_rows | grep -Fq 'opencode|sdd-init-prompt|' || fail 'OpenCode prompt-file requirement remains mapped' || exit 1
 )
 
 test_antigravity_skill_root_resolution() (
@@ -412,6 +411,26 @@ test_antigravity_skill_root_resolution() (
   [ "$(resolve_target_rel antigravity "$placeholder")" = '.gemini/antigravity-cli/skills/sdd-init/SKILL.md' ] || fail 'Antigravity did not select CLI skills when desktop is absent' || exit 1
   mkdir -p "$home/.gemini/antigravity-desktop"
   [ "$(resolve_target_rel antigravity "$placeholder")" = '.gemini/antigravity-desktop/skills/sdd-init/SKILL.md' ] || fail 'Antigravity did not prefer desktop skills' || exit 1
+)
+
+test_claude_style_resolution_refuses_ambiguity() (
+  local home="$TMP_ROOT/claude-style-resolution-home" backups="$TMP_ROOT/claude-style-resolution-backups"
+  mkdir -p "$home/.gentle-ai" "$home/.claude/output-styles"
+  printf '%s\n' '{"persona":"neutral"}' > "$home/.gentle-ai/state.json"
+  jq -n '{outputStyle: "Gentleman"}' > "$home/.claude/settings.json"
+  printf '%s\n' neutral > "$home/.claude/output-styles/neutral.md"
+  printf '%s\n' gentleman > "$home/.claude/output-styles/gentleman.md"
+  load_overlay "$home" "$backups"
+  if resolve_claude_output_style_rel >/dev/null 2>&1; then
+    fail 'conflicting Claude persona selectors passed resolution' || exit 1
+  fi
+  rm -f -- "$home/.claude/settings.json"
+  printf '%s\n' '{"persona":"gentleman-neutral-artifacts"}' > "$home/.gentle-ai/state.json"
+  [ "$(resolve_claude_output_style_rel)" = '.claude/output-styles/gentleman.md' ] || fail 'gentleman-neutral-artifacts did not select gentleman.md' || exit 1
+  printf '%s\n' '{"persona":"full-gentleman"}' > "$home/.gentle-ai/state.json"
+  if resolve_claude_output_style_rel >/dev/null 2>&1; then
+    fail 'full-gentleman preset passed Claude persona resolution' || exit 1
+  fi
 )
 
 write_init_skill_stock() {
@@ -444,6 +463,11 @@ test_opencode_sdd_init_inline_delegation_validation() (
   opencode_sdd_init_delegates "$config" && fail 'OpenCode redirected sdd-init prompt passed reachability validation' && exit 1
   jq -n '{agent: {}}' > "$config"
   opencode_sdd_init_delegates "$config" && fail 'OpenCode missing sdd-init prompt passed reachability validation' && exit 1
+  jq -n '{agent: {"sdd-init": {hidden: true, prompt: "{file:./prompts/sdd/sdd-init.md}"}}}' > "$config"
+  [ "$(opencode_sdd_init_mode "$config")" = external ] || fail 'OpenCode exact external prompt was not recognized' || exit 1
+  [ "$(opencode_sdd_init_external_target "$config")" = "$home/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'OpenCode external prompt did not map to its fixed target' || exit 1
+  jq -n '{agent: {"sdd-init": {hidden: true, prompt: "{file:./prompts/sdd/other.md}"}}}' > "$config"
+  opencode_sdd_init_mode "$config" >/dev/null 2>&1 && fail 'OpenCode arbitrary external prompt passed validation' && exit 1
   :
 )
 
@@ -558,6 +582,75 @@ write_opencode_init_config() {
   ' > "$file"
 }
 
+write_opencode_external_init_config() {
+  local file="$1" next
+  write_opencode_init_config "$file"
+  next="${file}.next"
+  jq '.agent["sdd-init"].prompt = "{file:./prompts/sdd/sdd-init.md}"' "$file" > "$next"
+  mv -- "$next" "$file"
+}
+
+test_neutral_external_profile_lifecycle() (
+  local home="$TMP_ROOT/neutral-external-home" backups="$TMP_ROOT/neutral-external-backups" rc
+  local state="$home/.gentle-ai/state.json" settings="$home/.claude/settings.json"
+  local claude="$home/.claude/CLAUDE.md" neutral="$home/.claude/output-styles/neutral.md"
+  local workflow="$home/.claude/skills/_shared/sdd-orchestrator-workflow.md"
+  local config="$home/.config/opencode/opencode.json" prompt="$home/.config/opencode/prompts/sdd/sdd-init.md"
+  local opencode_skill="$home/.config/opencode/skills/sdd-init/SKILL.md"
+  local state_before settings_before agent_before neutral_before prompt_before
+
+  mkdir -p "$(dirname -- "$state")" "$(dirname -- "$claude")" "$(dirname -- "$neutral")" \
+    "$(dirname -- "$workflow")" "$(dirname -- "$home/.claude/skills/sdd-init/references/init-details.md")" \
+    "$(dirname -- "$config")" "$(dirname -- "$home/.config/opencode/AGENTS.md")" \
+    "$(dirname -- "$home/.config/opencode/plugins/engram.ts")" "$(dirname -- "$opencode_skill")" \
+    "$(dirname -- "$home/.config/opencode/skills/sdd-init/references/init-details.md")" "$(dirname -- "$prompt")"
+  printf '%s\n' '{"installed_agents":["claude-code","opencode"],"persona":"neutral"}' > "$state"
+  jq -n '{outputStyle: "Neutral", profile: "selected-profile"}' > "$settings"
+  write_claude_split_stock > "$claude"
+  printf '%s\n' 'Installer-owned neutral style.' > "$neutral"
+  printf '%s\n' 'When launching `sdd-apply` or `sdd-verify`, search for testing capabilities' > "$workflow"
+  write_init_skill_stock > "$home/.claude/skills/sdd-init/SKILL.md"
+  write_init_details_stock > "$home/.claude/skills/sdd-init/references/init-details.md"
+  {
+    printf '%s\n' '<!-- gentle-ai:persona -->'
+    cat "$ROOT/persona/persona-block.md"
+    printf '%s\n' '<!-- /gentle-ai:persona -->'
+  } > "$home/.config/opencode/AGENTS.md"
+  write_opencode_external_init_config "$config"
+  write_opencode_stock > "$home/.config/opencode/plugins/engram.ts"
+  write_init_skill_stock > "$opencode_skill"
+  write_init_details_stock > "$home/.config/opencode/skills/sdd-init/references/init-details.md"
+  write_init_skill_stock > "$prompt"
+
+  state_before="$TMP_ROOT/neutral-external-state-before.json"
+  settings_before="$TMP_ROOT/neutral-external-settings-before.json"
+  neutral_before="$TMP_ROOT/neutral-external-style-before.md"
+  prompt_before="$TMP_ROOT/neutral-external-prompt-before.md"
+  cp -- "$state" "$state_before"
+  cp -- "$settings" "$settings_before"
+  cp -- "$neutral" "$neutral_before"
+  cp -- "$prompt" "$prompt_before"
+  agent_before="$(jq -c '.agent["sdd-init"]' "$config")"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
+  rc=$?
+  [ "$rc" -eq 2 ] || fail "neutral external --check should be pending, got rc $rc" || exit 1
+  cmp -s "$state" "$state_before" || fail 'neutral external --check changed persisted persona' || exit 1
+  cmp -s "$settings" "$settings_before" || fail 'neutral external --check changed Claude outputStyle' || exit 1
+  cmp -s "$neutral" "$neutral_before" || fail 'neutral external --check changed selected style' || exit 1
+  cmp -s "$prompt" "$prompt_before" || fail 'neutral external --check changed executable prompt' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
+  grep -Fq '# Neutral Output Style' "$neutral" || fail 'neutral external layout did not transform neutral.md' || exit 1
+  grep -Fq 'single writer of project TDD policy' "$prompt" || fail 'neutral external layout did not transform executable prompt' || exit 1
+  cmp -s "$state" "$state_before" || fail 'neutral external layout changed persisted persona selection' || exit 1
+  cmp -s "$settings" "$settings_before" || fail 'neutral external layout changed Claude profile selection' || exit 1
+  [ "$(jq -c '.agent["sdd-init"]' "$config")" = "$agent_before" ] || fail 'neutral external layout changed OpenCode sdd-init selection' || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "neutral external layout should be clean after apply, got rc $rc" || exit 1
+)
+
 # This fixture mirrors the active Claude, Pi, and OpenCode assets emitted by a
 # fresh Gentle AI 2.2.4 install. It must not create legacy compatibility paths.
 test_fresh_224_active_layout_lifecycle() (
@@ -618,7 +711,35 @@ test_fresh_224_active_layout_lifecycle() (
   [ "$rc" -eq 1 ] || fail "refused OpenCode sdd-init prompt should block apply, got rc $rc" || exit 1
   grep -Fqx 'pending Claude style must survive failed preflight' "$gentleman" || fail 'refused OpenCode prompt allowed a preflight write' || exit 1
 
+  jq '.agent["sdd-init"].prompt = "{file:./prompts/sdd/sdd-init.md}"' "$config_before" > "$config_before.next"
+  mv -- "$config_before.next" "$config"
+  printf '%s\n' 'pending Claude style must survive missing external prompt' > "$gentleman"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "missing external prompt should block apply, got rc $rc" || exit 1
+  grep -Fqx 'pending Claude style must survive missing external prompt' "$gentleman" || fail 'missing external prompt allowed a preflight write' || exit 1
+
+  jq '.agent["sdd-init"].prompt = "{file:./prompts/sdd/other.md}"' "$config_before" > "$config_before.next"
+  mv -- "$config_before.next" "$config"
+  printf '%s\n' 'pending Claude style must survive arbitrary external prompt' > "$gentleman"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "arbitrary external prompt should block apply, got rc $rc" || exit 1
+  grep -Fqx 'pending Claude style must survive arbitrary external prompt' "$gentleman" || fail 'arbitrary external prompt allowed a preflight write' || exit 1
+
+  mkdir -p "$home/.config/opencode/prompts/sdd"
+  printf '%s\n' 'outside prompt target' > "$TMP_ROOT/external-prompt-target.md"
+  ln -s "$TMP_ROOT/external-prompt-target.md" "$home/.config/opencode/prompts/sdd/sdd-init.md"
+  jq '.agent["sdd-init"].prompt = "{file:./prompts/sdd/sdd-init.md}"' "$config_before" > "$config_before.next"
+  mv -- "$config_before.next" "$config"
+  printf '%s\n' 'pending Claude style must survive unsafe external prompt' > "$gentleman"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "unsafe external prompt should block apply, got rc $rc" || exit 1
+  grep -Fqx 'pending Claude style must survive unsafe external prompt' "$gentleman" || fail 'unsafe external prompt allowed a preflight write' || exit 1
+
   cp -- "$config_before" "$config"
+  rm -f -- "$home/.config/opencode/prompts/sdd/sdd-init.md"
   rm -f -- "$pi_init"
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
   rc=$?
@@ -793,6 +914,7 @@ run test_target_drift_is_closed
 run test_installed_hosts_fallback_includes_gemini
 run test_sdd_init_host_rows_cover_cursor_and_copilot
 run test_antigravity_skill_root_resolution
+run test_claude_style_resolution_refuses_ambiguity
 run test_opencode_sdd_init_inline_delegation_validation
 run test_init_rubric_source_shape_refusal
 run test_init_rubric_refuses_anchor_inside_managed_section
@@ -800,6 +922,7 @@ run test_init_rubric_shared_skill_idempotence_and_backup
 run test_init_rubric_reference_and_pi_idempotence
 run test_init_rubric_replaces_complete_section
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
+run test_neutral_external_profile_lifecycle
 run test_fresh_224_active_layout_lifecycle
 
 bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))

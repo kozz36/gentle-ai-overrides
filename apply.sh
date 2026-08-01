@@ -54,16 +54,16 @@ CHANGED=0
 #                        inside <!-- gentle-ai:persona -->, preserving the
 #                        installer-managed Contextual Skill Loading and Persona
 #                        Voice sections byte-exact.
-#   persona-split-style claude-code's externalized gentleman.md (tone/behavior);
-#                        wholesale canonical replacement (no installer-managed
-#                        regions inside).
+#   persona-split-style claude-code's selected externalized neutral.md or
+#                       gentleman.md (tone/behavior); wholesale canonical
+#                       replacement (no installer-managed regions inside).
 #   rubric-list      markdown surface WITH the MANDATORY numbered list -> rubric is item 4
 #   rubric-prose     markdown surface WITHOUT the list (claude-code's condensed workflow)
 #                    -> the loose-paragraph shape is the only one that fits
 #   rubric-json      opencode.json -> .agent["gentle-orchestrator"].prompt (carries the list)
 #   rubric-none      host has no strict-TDD forwarding section; nothing to inject
-#   sdd-init-delegation OpenCode's inline hidden-agent prompt must delegate to
-#                       the managed sdd-init skill
+#   sdd-init-delegation OpenCode's hidden agent uses either the native inline
+#                       imperative or the exact native external prompt reference
 #   pi-models        pi's sdd-model-assignments block -> host-agnostic `inherit`
 #                    (pi routes phases via ~/.pi/gentle-ai/models.json; the Claude
 #                     aliases gentle-ai renders there are unresolvable). pi ONLY.
@@ -71,7 +71,7 @@ CHANGED=0
 host_rows() {
   cat <<'ROWS'
 claude-code|persona-split-claude|.claude/CLAUDE.md
-claude-code|persona-split-style|.claude/output-styles/gentleman.md
+claude-code|persona-split-style|@claude-output-style@
 claude-code|rubric-prose|.claude/skills/_shared/sdd-orchestrator-workflow.md
 claude-code|sdd-init-skill|.claude/skills/sdd-init/SKILL.md
 claude-code|sdd-init-details|.claude/skills/sdd-init/references/init-details.md
@@ -127,6 +127,9 @@ installed_hosts() {
 resolve_target_rel() {
   local host="$1" rel="$2" suffix
   case "$host:$rel" in
+    claude-code:@claude-output-style@)
+      resolve_claude_output_style_rel
+      ;;
     antigravity:@antigravity-skills@/*)
       suffix="${rel#@antigravity-skills@/}"
       if [ -d "$HOME/.gemini/antigravity-desktop" ]; then
@@ -160,6 +163,61 @@ backup() {
 # atomic only when the temporary file is created beside the target.
 safe_target() {
   [ ! -L "$1" ] && [ -f "$1" ]
+}
+
+# Claude Code keeps its selected output style in settings while Gentle AI
+# persists the selected persona. Either is authoritative when present; a
+# disagreement must not be guessed through because it could overwrite the
+# unselected native style.
+claude_style_from_state() {
+  local persona
+  [ -e "$STATE_JSON" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 1
+  persona="$(jq -r 'if type != "object" then error("state must be an object") elif has("persona") then (.persona | if type == "string" then ascii_downcase else error("persona must be a string") end) else empty end' "$STATE_JSON" 2>/dev/null)" || return 1
+  case "$persona" in
+    '') ;;
+    neutral) printf '%s\n' neutral ;;
+    gentleman|gentleman-neutral-artifacts) printf '%s\n' gentleman ;;
+    *) return 1 ;;
+  esac
+}
+
+claude_style_from_settings() {
+  local settings="$HOME/.claude/settings.json" style
+  [ -e "$settings" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 1
+  style="$(jq -r 'if type != "object" then error("settings must be an object") elif has("outputStyle") then (.outputStyle | if type == "string" then ascii_downcase else error("outputStyle must be a string") end) else empty end' "$settings" 2>/dev/null)" || return 1
+  case "$style" in
+    '') ;;
+    neutral|gentleman) printf '%s\n' "$style" ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_claude_output_style_rel() {
+  local state_style settings_style native neutral gentleman
+  state_style="$(claude_style_from_state)" || return 1
+  settings_style="$(claude_style_from_settings)" || return 1
+  if [ -n "$state_style" ] && [ -n "$settings_style" ] && [ "$state_style" != "$settings_style" ]; then
+    return 1
+  fi
+  native="${state_style:-$settings_style}"
+  if [ -n "$native" ]; then
+    printf '%s\n' ".claude/output-styles/$native.md"
+    return 0
+  fi
+
+  # Minimal fixtures may intentionally omit persisted selectors. Accept only a
+  # single exposed native style; zero or two files is unsupported ambiguity.
+  neutral="$HOME/.claude/output-styles/neutral.md"
+  gentleman="$HOME/.claude/output-styles/gentleman.md"
+  if { [ -e "$neutral" ] || [ -L "$neutral" ]; } && ! { [ -e "$gentleman" ] || [ -L "$gentleman" ]; }; then
+    printf '%s\n' '.claude/output-styles/neutral.md'
+  elif { [ -e "$gentleman" ] || [ -L "$gentleman" ]; } && ! { [ -e "$neutral" ] || [ -L "$neutral" ]; }; then
+    printf '%s\n' '.claude/output-styles/gentleman.md'
+  else
+    return 1
+  fi
 }
 
 target_tmp() {
@@ -754,12 +812,29 @@ opencode_engram_apply() {
   return "$rc"
 }
 
-# OpenCode 2.2.4 embeds the hidden sdd-init agent prompt directly in strict JSON.
-# The managed skill is executable only when the terminal imperative delegates to it.
-opencode_sdd_init_delegates() {
+# OpenCode 2.2.4 has two native hidden sdd-init shapes. The inline imperative
+# executes the managed skill; the exact external reference executes its prompt
+# file directly. Nothing else is a supported executable surface.
+opencode_sdd_init_mode() {
   local file="$1"
   command -v jq >/dev/null 2>&1 || return 1
-  jq -e '.agent["sdd-init"] | (.hidden == true and (.prompt | strings | test("(^|[.!?][[:space:]]+)Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL\\.md and follow it exactly\\.[[:space:]]*$")))' "$file" >/dev/null 2>&1
+  jq -er '
+    .agent["sdd-init"] as $agent
+    | if ($agent | type) != "object" or $agent.hidden != true or ($agent.prompt | type) != "string" then error("invalid hidden sdd-init agent")
+      elif ($agent.prompt | test("(^|[.!?][[:space:]]+)Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL\\.md and follow it exactly\\.[[:space:]]*$")) then "inline"
+      elif $agent.prompt == "{file:./prompts/sdd/sdd-init.md}" then "external"
+      else error("unsupported sdd-init prompt")
+      end
+  ' "$file" 2>/dev/null
+}
+
+opencode_sdd_init_delegates() {
+  [ "$(opencode_sdd_init_mode "$1" 2>/dev/null)" = inline ]
+}
+
+opencode_sdd_init_external_target() {
+  [ "$(opencode_sdd_init_mode "$1" 2>/dev/null)" = external ] || return 1
+  printf '%s\n' "$HOME/.config/opencode/prompts/sdd/sdd-init.md"
 }
 
 # rc 0 = written/pending, 1 = already applied, 3 = anchor gone,
@@ -853,7 +928,11 @@ while IFS= read -r host; do
   while IFS='|' read -r h surface rel; do
     [ "$h" = "$host" ] || continue
     matched=1
-    rel="$(resolve_target_rel "$host" "$rel")"
+    if ! rel="$(resolve_target_rel "$host" "$rel")" || [ -z "$rel" ]; then
+      report "UNSUPPORTED-VARIANT" "$surface" "unresolved target"
+      MISSING_ANCHOR=1
+      continue
+    fi
     file="$HOME/$rel"
     short="${rel}"
 
@@ -884,13 +963,13 @@ while IFS= read -r host; do
       persona-split-style)
         persona_split_style_apply "$file"; rc=$?
         case "$rc" in
-          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "persona" "$short (split: gentleman)"; PENDING=1
-              else report "applied" "persona" "$short (split: gentleman)"; CHANGED=1; fi ;;
-          1) report "already-applied" "persona" "$short (split: gentleman)" ;;
-          3) report "ANCHOR-NOT-FOUND" "persona" "$short (split: gentleman)"; MISSING_ANCHOR=1 ;;
-          4) report "WRITE-FAILED" "persona" "$short (split: gentleman)"; OPERATION_FAILED=1 ;;
-          5) report "TARGET-DRIFT" "persona" "$short (split: gentleman)"; TARGET_DRIFT=1 ;;
-          *) report "WRITE-FAILED" "persona" "$short (split: gentleman)"; OPERATION_FAILED=1 ;;
+          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "persona" "$short (split style)"; PENDING=1
+              else report "applied" "persona" "$short (split style)"; CHANGED=1; fi ;;
+          1) report "already-applied" "persona" "$short (split style)" ;;
+          3) report "ANCHOR-NOT-FOUND" "persona" "$short (split style)"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "persona" "$short (split style)"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "persona" "$short (split style)"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "persona" "$short (split style)"; OPERATION_FAILED=1 ;;
         esac
         ;;
       persona-marked|persona-headed)
@@ -959,10 +1038,36 @@ while IFS= read -r host; do
         esac
         ;;
       sdd-init-delegation)
-        if opencode_sdd_init_delegates "$file"; then
+        init_mode="$(opencode_sdd_init_mode "$file" 2>/dev/null)"
+        if [ "$init_mode" = inline ]; then
           report "reachable" "sdd-init-rubric" "$short (inline prompt -> managed skill)"
+        elif [ "$init_mode" = external ]; then
+          prompt_file="$(opencode_sdd_init_external_target "$file")" || {
+            report "UNREACHABLE" "sdd-init-rubric" "$short (unsupported external prompt)"
+            MISSING_ANCHOR=1
+            continue
+          }
+          prompt_short=".config/opencode/prompts/sdd/sdd-init.md"
+          if [ ! -e "$prompt_file" ] && [ ! -L "$prompt_file" ]; then
+            report "MISSING-FILE" "sdd-init-rubric" "$prompt_short (external prompt)"
+            MISSING_ANCHOR=1
+          elif ! safe_target "$prompt_file"; then
+            report "UNSAFE-TARGET" "sdd-init-rubric" "$prompt_short (external prompt)"
+            OPERATION_FAILED=1
+          else
+            init_rubric_apply "$prompt_file" skill; rc=$?
+            case "$rc" in
+              0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "sdd-init-rubric" "$prompt_short (external prompt)"; PENDING=1
+                 else report "applied" "sdd-init-rubric" "$prompt_short (external prompt)"; CHANGED=1; fi ;;
+              1) report "already-applied" "sdd-init-rubric" "$prompt_short (external prompt)" ;;
+              3) report "ANCHOR-NOT-FOUND" "sdd-init-rubric" "$prompt_short (external prompt)"; MISSING_ANCHOR=1 ;;
+              4) report "WRITE-FAILED" "sdd-init-rubric" "$prompt_short (external prompt)"; OPERATION_FAILED=1 ;;
+              5) report "TARGET-DRIFT" "sdd-init-rubric" "$prompt_short (external prompt)"; TARGET_DRIFT=1 ;;
+              *) report "WRITE-FAILED" "sdd-init-rubric" "$prompt_short (external prompt)"; OPERATION_FAILED=1 ;;
+            esac
+          fi
         else
-          report "UNREACHABLE" "sdd-init-rubric" "$short (inline prompt must delegate to managed skill)"
+          report "UNREACHABLE" "sdd-init-rubric" "$short (unsupported hidden prompt shape)"
           MISSING_ANCHOR=1
         fi
         ;;
