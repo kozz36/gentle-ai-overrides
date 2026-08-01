@@ -158,6 +158,27 @@ extract_init_shape() {
   [ -s "$out" ] || fail "$shape source asset is missing"
 }
 
+test_deterministic_fallback_contract() (
+  local reference="$TMP_ROOT/rubric-authoring.md" reason
+  extract_init_shape reference "$reference" || exit 1
+  grep -Fq '## Deterministic Baseline Fallback Producer' "$reference" || fail 'reference lacks deterministic fallback producer contract' || exit 1
+  grep -Fq 'Fallback is eligible only before a valid candidate is published' "$reference" || fail 'fallback eligibility is not limited to pre-publication primary failure' || exit 1
+  for reason in provider-unconfigured provider-unavailable provider-timeout primary-output-malformed primary-output-structurally-invalid; do
+    grep -Fq "\`$reason\`" "$reference" || { fail "fallback reason is missing: $reason"; exit 1; }
+  done
+  grep -Fq 'A valid existing rubric is preserved; fallback never replaces it.' "$reference" || fail 'fallback may replace a valid rubric' || exit 1
+  grep -Fq 'invalid, duplicate, staging, recovery-required, conflicted, unavailable, or mismatched observed canonical state remains recovery-blocked; fallback MUST NOT overwrite or bypass it.' "$reference" || fail 'fallback may bypass observed invalid canonical state' || exit 1
+  grep -Fq 'When primary output is malformed or structurally invalid before canonical state publication, discard it and invoke fallback only as a pending candidate.' "$reference" || fail 'malformed primary output may reach fallback after publication' || exit 1
+  grep -Fq 'After canonical state is observed, malformed primary output remains recovery-blocked and never invokes fallback.' "$reference" || fail 'observed invalid state may invoke fallback' || exit 1
+  grep -Fq 'Emit every Task-Intent Policy Baseline v1 row in baseline-table order' "$reference" || fail 'fallback ordering is not deterministic' || exit 1
+  grep -Fq 'Bind only detected project capabilities that are satisfiable for the row scope' "$reference" || fail 'fallback may invent or mis-scope evidence bindings' || exit 1
+  grep -Fq 'Do not infer external or project-specific policy, commands, evidence, or local rules' "$reference" || fail 'fallback may infer local policy' || exit 1
+  grep -Fq 'producer: deterministic-baseline-fallback' "$reference" || fail 'fallback producer provenance is missing' || exit 1
+  grep -Fq 'fallback_reason: one admitted enum value above' "$reference" || fail 'fallback reason provenance is missing' || exit 1
+  grep -Fq 'fallback output is candidate/IR input only: it cannot write active YAML or Engram policy directly and cannot mint `ResolutionV1`.' "$reference" || fail 'fallback has a direct activation route' || exit 1
+  grep -Fq 'The canonical compiler validates and publishes primary and fallback candidates through exactly one shared path:' "$reference" || fail 'fallback bypasses the shared compiler path' || exit 1
+)
+
 test_rubric_authoring_reference_contract() (
   local reference="$TMP_ROOT/rubric-authoring.md" init="$ROOT/deltas/sdd-init-rubric.md" one two three four five matrix_rows skip_rows
   extract_init_shape reference "$reference" || exit 1
@@ -302,6 +323,7 @@ run test_policy_contract
 run test_delta_shape_grammar
 run test_validator_shape_parity
 run test_structural_boundary
+run test_deterministic_fallback_contract
 run test_rubric_authoring_reference_contract
 run test_consumer_host_shape_goldens
 
