@@ -85,6 +85,16 @@ validate_delta_shape() {
   ' "$1"
 }
 
+extract_init_shape() {
+  local shape="$1" out="$2"
+  awk -v shape="$shape" '
+    $0 == "<!-- shape:" shape " -->" { inside = 1; next }
+    $0 == "<!-- /shape:" shape " -->" { inside = 0; exit }
+    inside { print }
+  ' "$ROOT/deltas/sdd-init-rubric.md" > "$out"
+  [ -s "$out" ] || fail "missing $shape fallback contract"
+}
+
 test_policy_contract() (
   local init="$ROOT/deltas/sdd-init-rubric.md" consumer="$ROOT/deltas/rubric-tdd.md"
   assert_project_declared_satisfiability "$init" 'sdd-init delta' || exit 1
@@ -93,7 +103,7 @@ test_policy_contract() (
   grep -Fq 'sole resolution owner' "$consumer" || fail 'consumer permits downstream resolution' || exit 1
   grep -Fq 'RubricConsumerBlockedV1' "$consumer" || fail 'consumer lacks the blocked state-gate envelope' || exit 1
   grep -Fq 'never fall back to rubric `default` or binary `strict_tdd`' "$consumer" || fail 'consumer permits fallback after rubric observation' || exit 1
-  grep -Fq 'only when no rubric state has ever been observed' "$consumer" || fail 'consumer lacks the legacy boundary' || exit 1
+  grep -Fq 'only when no rubric state has ever been declared or observed' "$consumer" || fail 'consumer lacks the legacy boundary' || exit 1
 )
 
 test_delta_shape_grammar() (
@@ -114,6 +124,26 @@ test_delta_shape_grammar() (
   done
 )
 
+test_deterministic_fallback_contract() (
+  local shape file reason
+  for shape in skill details pi; do
+    file="$TMP_ROOT/$shape-fallback.md"
+    extract_init_shape "$shape" "$file" || exit 1
+    grep -Fq 'eligible only before any rubric state has been declared or observed' "$file" || fail "$shape permits fallback after state declaration or observation" || exit 1
+    for reason in provider-unconfigured provider-unavailable provider-timeout primary-output-malformed primary-output-structurally-invalid; do
+      grep -Fq "\`$reason\`" "$file" || fail "$shape omits fallback reason: $reason" || exit 1
+    done
+    grep -Fq 'every other condition fails closed' "$file" || fail "$shape permits an untyped fallback reason" || exit 1
+    grep -Fq 'A valid active rubric is reused' "$file" || fail "$shape may replace valid active state" || exit 1
+    grep -Fq 'Declared-but-invalid, duplicate, staging, recovery-required, conflicted, unreadable, unavailable, or mismatched state blocks fallback' "$file" || fail "$shape permits fallback around observed invalid state" || exit 1
+    grep -Fq 'fixed Task-Intent Baseline v1 rows in this canonical order' "$file" || fail "$shape lacks deterministic baseline rows" || exit 1
+    grep -Fq 'baseline_version: task-intent-policy-baseline/v1' "$file" || fail "$shape lacks baseline provenance" || exit 1
+    grep -Fq 'producer: deterministic-baseline-fallback' "$file" || fail "$shape lacks fallback producer provenance" || exit 1
+    grep -Fq 'one admitted `fallback_reason` in candidate provenance' "$file" || fail "$shape lacks fallback reason provenance" || exit 1
+    grep -Fq 'structural validation, canonical compilation, serialization, activation, and independent readback before `ResolutionV1` publication' "$file" || fail "$shape bypasses the canonical activation path" || exit 1
+  done
+)
+
 run() {
   local name="$1"
   if "$name"; then
@@ -127,6 +157,7 @@ run() {
 
 run test_policy_contract
 run test_delta_shape_grammar
+run test_deterministic_fallback_contract
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
