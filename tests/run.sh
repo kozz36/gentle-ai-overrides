@@ -397,6 +397,7 @@ test_sdd_init_host_rows_cover_cursor_and_copilot() (
   host_rows | grep -Fqx 'cursor|sdd-init-details|.cursor/skills/sdd-init/references/init-details.md' || fail 'Cursor sdd-init details row is missing' || exit 1
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-skill|.copilot/skills/sdd-init/SKILL.md' || fail 'Copilot sdd-init skill row is missing' || exit 1
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md' || fail 'Copilot sdd-init details row is missing' || exit 1
+  host_rows | grep -Fqx 'opencode|sdd-init-prompt|.config/opencode/prompts/sdd/sdd-init.md' || fail 'OpenCode executable sdd-init prompt row is missing' || exit 1
 )
 
 test_antigravity_skill_root_resolution() (
@@ -422,6 +423,86 @@ Installer-owned introduction.
 Installer-owned decisions.
 EOF
 }
+
+resolve_opencode_sdd_init_prompt() {
+  local home="$1" config prompt
+  config="$home/.config/opencode/opencode.json"
+  prompt="$(jq -er '.agent["sdd-init"].prompt | strings' "$config")" || return 1
+  [ "$prompt" = '{file:./prompts/sdd/sdd-init.md}' ] || return 1
+  printf '%s\n' "$home/.config/opencode/prompts/sdd/sdd-init.md"
+}
+
+test_opencode_sdd_init_prompt_lifecycle_and_reachability() (
+  local home="$TMP_ROOT/opencode-init-prompt-home" backups="$TMP_ROOT/opencode-init-prompt-backups" \
+    missing_backups="$TMP_ROOT/opencode-init-prompt-missing-backups" \
+    duplicate_backups="$TMP_ROOT/opencode-init-prompt-duplicate-backups" \
+    config file before snapshot replacement
+  config="$home/.config/opencode/opencode.json"
+  file="$home/.config/opencode/prompts/sdd/sdd-init.md"
+  before="$TMP_ROOT/opencode-init-prompt-before.md"
+  mkdir -p "$(dirname -- "$config")" "$(dirname -- "$file")"
+  jq -n '{agent: {"sdd-init": {prompt: "{file:./prompts/sdd/sdd-init.md}"}}}' > "$config"
+  write_init_skill_stock > "$file"
+  cp -- "$file" "$before"
+
+  load_overlay "$home" "$backups"
+  [ "$(resolve_opencode_sdd_init_prompt "$home")" = "$file" ] || fail 'OpenCode sdd-init prompt did not resolve to the managed entrypoint' || exit 1
+  CHECK_ONLY=1
+  expect_rc 0 init_rubric_apply "$file" skill || exit 1
+  cmp -s "$file" "$before" || fail 'OpenCode sdd-init --check changed the executable prompt' || exit 1
+  [ ! -e "$backups/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'OpenCode sdd-init --check created a backup' || exit 1
+  CHECK_ONLY=0
+  expect_rc 0 init_rubric_apply "$file" skill || exit 1
+  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$file" || fail 'OpenCode executable prompt lacks the managed rubric marker' || exit 1
+  grep -Fq 'single writer of project TDD policy' "$file" || fail 'OpenCode executable prompt lacks the managed contract' || exit 1
+  awk '/<!-- gentle-ai:sdd-init-rubric -->/{ marker = NR } /^## Decision Gates$/{ decision = NR } END { exit !(marker && decision && marker < decision) }' "$file" || fail 'OpenCode managed contract is not before the decision gate' || exit 1
+  cmp -s "$before" "$backups/.config/opencode/prompts/sdd/sdd-init.md" || fail 'OpenCode executable prompt backup is not original' || exit 1
+  expect_rc 1 init_rubric_apply "$file" skill || exit 1
+
+  cat > "$file" <<'EOF'
+Before managed section.
+<!-- gentle-ai:sdd-init-rubric -->
+stale managed content
+<!-- /gentle-ai:sdd-init-rubric -->
+
+## Decision Gates
+
+After managed section.
+EOF
+  load_overlay "$home" "$TMP_ROOT/opencode-init-prompt-replacement-backups"
+  expect_rc 0 init_rubric_apply "$file" skill || exit 1
+  grep -Fq 'stale managed content' "$file" && fail 'OpenCode executable prompt retained stale managed content' && exit 1
+  grep -Fq 'After managed section.' "$file" || fail 'OpenCode executable prompt replacement changed surrounding content' || exit 1
+
+  printf '%s\n' 'no decision anchor' > "$file"
+  cp -- "$file" "$TMP_ROOT/opencode-init-prompt-missing-before.md"
+  load_overlay "$home" "$missing_backups"
+  expect_rc 3 init_rubric_apply "$file" skill || exit 1
+  cmp -s "$file" "$TMP_ROOT/opencode-init-prompt-missing-before.md" || fail 'missing-anchor executable prompt changed' || exit 1
+  [ ! -e "$missing_backups/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'missing-anchor executable prompt was backed up' || exit 1
+
+  {
+    write_init_skill_stock
+    printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'one' '<!-- /gentle-ai:sdd-init-rubric -->'
+    printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'two' '<!-- /gentle-ai:sdd-init-rubric -->'
+  } > "$file"
+  cp -- "$file" "$TMP_ROOT/opencode-init-prompt-duplicate-before.md"
+  load_overlay "$home" "$duplicate_backups"
+  expect_rc 3 init_rubric_apply "$file" skill || exit 1
+  cmp -s "$file" "$TMP_ROOT/opencode-init-prompt-duplicate-before.md" || fail 'duplicate-marker executable prompt changed' || exit 1
+  [ ! -e "$duplicate_backups/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'duplicate-marker executable prompt was backed up' || exit 1
+
+  write_init_skill_stock > "$file"
+  load_overlay "$home" "$TMP_ROOT/opencode-init-prompt-drift-backups"
+  snapshot="$(target_tmp "$file")"
+  replacement="$(target_tmp "$file")"
+  cp -p -- "$file" "$snapshot"
+  printf '%s\n' 'replacement output' > "$replacement"
+  printf '%s\n' 'concurrent writer' > "$file"
+  expect_rc 5 commit_replacement "$file" "$snapshot" "$replacement" || exit 1
+  grep -Fqx 'concurrent writer' "$file" || fail 'drifted executable prompt was overwritten' || exit 1
+  rm -f -- "$snapshot" "$replacement"
+)
 
 write_init_details_stock() {
   cat <<'EOF'
@@ -617,6 +698,7 @@ run test_target_drift_is_closed
 run test_installed_hosts_fallback_includes_gemini
 run test_sdd_init_host_rows_cover_cursor_and_copilot
 run test_antigravity_skill_root_resolution
+run test_opencode_sdd_init_prompt_lifecycle_and_reachability
 run test_init_rubric_source_shape_refusal
 run test_init_rubric_refuses_anchor_inside_managed_section
 run test_init_rubric_shared_skill_idempotence_and_backup
