@@ -8,7 +8,8 @@ This is an unofficial, community-maintained project. It is not affiliated with,
 endorsed by, or supported by Gentleman Programming. Gentle AI and its original
 prompt assets are licensed separately; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
-Validated with Gentle AI `2.2.0` on Linux and macOS.
+Active-surface compatibility was reverified with Gentle AI `2.2.4` on Linux;
+prior `2.2.2` validation covered Linux and macOS.
 
 ## Install
 
@@ -161,9 +162,15 @@ loading `apply.sh`; `tests/run.sh` covers the cross-host transform behavior.
 The contract requires project-derived signatures, a `strict_tdd`-derived default
 row, strictest-wins matching with unioned obligations, equivalent mode-specific
 persistence, and confirmation-gated re-init drift maintenance. `apply.sh`
-installs it before the exact 2.2.0 anchors `## Decision Gates`, `## Output
-Templates`, and Pi's `## Memory Contract`; incomplete or ambiguous managed
-markers/anchors fail closed.
+installs it before the exact SDD-init anchors `## Decision Gates`, `## Output
+Templates`, and Pi's `## Memory Contract`, which were reverified unchanged on
+active Gentle AI 2.2.4 surfaces; incomplete or ambiguous managed markers and
+anchors fail closed.
+
+For OpenCode, `SKILL.md` and `references/` remain support/manual surfaces. The
+hidden `sdd-init` agent executes the prompt resolved from
+`.agent["sdd-init"].prompt` in `opencode.json`; the mapped
+`prompts/sdd/sdd-init.md` receives the same marker-bounded `skill` contract.
 
 ### 5. `deltas/pi-model-agnostic.md` — pi's Model Assignments, made host-agnostic
 
@@ -220,6 +227,8 @@ real agent identifier while preserving host-owned model routing.
 | `pi` | `~/.pi/agent/APPEND_SYSTEM.md` | marker block | item 4 (same file) |
 | `opencode` | `~/.config/opencode/AGENTS.md` | marker block | — |
 | `opencode` | `~/.config/opencode/opencode.json` | — | item 4, via `jq` into `.agent["gentle-orchestrator"].prompt` |
+| `opencode` | `~/.config/opencode/skills/sdd-init/SKILL.md`, `~/.config/opencode/skills/sdd-init/references/init-details.md` | support/manual surfaces for `sdd-init` | — |
+| `opencode` | `~/.config/opencode/prompts/sdd/sdd-init.md` | executable `sdd-init` entrypoint from `.agent["sdd-init"].prompt`; managed before `## Decision Gates` | — |
 | `codex` | `~/.codex/AGENTS.md` | heading-bounded | **n/a** — template has no strict-TDD section |
 | `cursor` | `~/.cursor/rules/gentle-ai.mdc` | heading-bounded | item 4 (same file) |
 | `vscode-copilot` | `~/.config/Code/User/prompts/gentle-ai.instructions.md` | heading-bounded | item 4 (same file) |
