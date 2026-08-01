@@ -105,12 +105,22 @@ Claude Code uses a split persona instead of the nine-section inline block:
   persona block in `~/.claude/CLAUDE.md`.
 - `persona/claude-split-expertise.md` replaces only `## Expertise` in that same
   block.
-- `persona/neutral-style.md` is the canonical complete
-  `~/.claude/output-styles/gentleman.md` file.
+- `persona/neutral-style.md` is the canonical complete selected-style body.
+  It replaces either `~/.claude/output-styles/neutral.md` or
+  `~/.claude/output-styles/gentleman.md`; the filename is native state, not
+  overlay configuration.
 
 `## Contextual Skill Loading` and `## Persona Voice` remain installer-managed
 and are preserved byte-for-byte. Missing persona markers or either targeted
 heading fail the preflight before any file is written.
+
+The selected style is resolved without changing the persona or profile: the
+persisted Gentle AI `state.json` persona and Claude `settings.json`
+`outputStyle` must agree when both exist. Persona `neutral` selects
+`neutral.md`; personas `gentleman` and `gentleman-neutral-artifacts` select
+`gentleman.md`. For isolated fixtures that lack selector metadata, exactly one
+exposed native style file is accepted. An unknown selector, disagreement, or
+zero/two style files fails closed; the overlay never creates a style file.
 
 ### 3. `deltas/rubric-tdd.md` — the RUBRIC TDD condition
 
@@ -167,10 +177,18 @@ Templates`, and Pi's `## Memory Contract`, which were reverified unchanged on
 active Gentle AI 2.2.4 surfaces; incomplete or ambiguous managed markers and
 anchors fail closed.
 
-For OpenCode, `SKILL.md` is the managed executable surface. The hidden inline
-`sdd-init` agent prompt in strict `opencode.json` must delegate to
-`~/.config/opencode/skills/sdd-init/SKILL.md`; preflight rejects a missing or
-redirected delegation without creating a prompt file.
+OpenCode accepts exactly two hidden `sdd-init` shapes in strict `opencode.json`:
+
+| Native shape | Executable surface | Overlay action |
+| --- | --- | --- |
+| Inline prompt ending `Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly.` | `~/.config/opencode/skills/sdd-init/SKILL.md` | Applies the `skill` rubric overlay to the managed skill; no prompt file is created. |
+| Exact `{file:./prompts/sdd/sdd-init.md}` reference | `~/.config/opencode/prompts/sdd/sdd-init.md` | Applies the same `skill` rubric overlay to that referenced executable prompt. |
+
+The external profile does not delegate to the managed skill. Its referenced
+prompt is the executable phase surface, so it receives the overlay itself.
+Any visible agent, missing file, symlink, arbitrary reference, traversal,
+redirected/refusal text, or unsupported JSON shape fails global preflight
+before a host file is written.
 
 ### 5. `deltas/pi-model-agnostic.md` — pi's Model Assignments, made host-agnostic
 
@@ -222,14 +240,14 @@ real agent identifier while preserving host-owned model routing.
 
 | Host | File | Persona | RUBRIC TDD |
 | --- | --- | --- | --- |
-| `claude-code` | `~/.claude/CLAUDE.md`, `~/.claude/output-styles/gentleman.md` | split shape — Rules + Expertise are heading-bounded; gentleman style is replaced wholesale | — |
+| `claude-code` | `~/.claude/CLAUDE.md`, selected `~/.claude/output-styles/{neutral,gentleman}.md` | split shape — Rules + Expertise are heading-bounded; the selected native style is replaced wholesale | — |
 | `claude-code` | `~/.claude/skills/_shared/sdd-orchestrator-workflow.md` | — | **prose** — this surface has no numbered list |
 | `pi` | `~/.pi/agent/APPEND_SYSTEM.md` | marker block | item 4 (same file) |
 | `pi` | `~/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md` | executable `sdd-init` asset | — |
 | `opencode` | `~/.config/opencode/AGENTS.md` | marker block | — |
 | `opencode` | `~/.config/opencode/opencode.json` | — | item 4, via `jq` into `.agent["gentle-orchestrator"].prompt` |
 | `opencode` | `~/.config/opencode/skills/sdd-init/SKILL.md`, `~/.config/opencode/skills/sdd-init/references/init-details.md` | managed `sdd-init` skill and reference; the skill is transformed before `## Decision Gates` | — |
-| `opencode` | `~/.config/opencode/opencode.json` | inline hidden `sdd-init` prompt must delegate to the managed skill | — |
+| `opencode` | `~/.config/opencode/opencode.json` | hidden inline skill delegation or the exact external reference; external mode maps `prompts/sdd/sdd-init.md` as the executable skill-shaped target | — |
 | `codex` | `~/.codex/AGENTS.md` | heading-bounded | **n/a** — template has no strict-TDD section |
 | `cursor` | `~/.cursor/rules/gentle-ai.mdc` | heading-bounded | item 4 (same file) |
 | `vscode-copilot` | `~/.config/Code/User/prompts/gentle-ai.instructions.md` | heading-bounded | item 4 (same file) |
@@ -252,9 +270,10 @@ Two persona shapes exist in the wild:
   `<!-- gentle-ai:` section marker) where they do not.
 - **New / split shape** (claude-code only): `CLAUDE.md` keeps Rules + Expertise +
   Skill Loading + Persona Voice, while Tone / Behavior / Language live in
-  `output-styles/gentleman.md`. The overlay replaces only Rules and Expertise in
-  `CLAUDE.md`, preserves the other two sections, and installs the canonical
-  `gentleman.md` file.
+  the selected `output-styles/neutral.md` or `output-styles/gentleman.md`. The
+  overlay replaces only Rules and Expertise in `CLAUDE.md`, preserves the other
+  two sections, and replaces only the selected native style file with the
+  canonical body.
 
 ## Anchors, not line numbers
 
