@@ -1,0 +1,105 @@
+schema: spec-driven
+
+context: |
+  Project: gentle-ai-overrides
+  Stack: Bash 3.2+, POSIX utilities, jq for OpenCode paths.
+  Architecture: anchor-based shell overlay with hermetic fixture tests.
+  Testing: Bash regression suite plus CI Bash syntax and ShellCheck gates.
+  Style: fail-closed transforms, idempotent application, no HOME mutation in tests.
+  Planned change: rubric-compiler-foundation (not created during init).
+
+strict_tdd: false
+
+testing:
+  policy: rubric
+  rubric:
+    active: true
+    authoritative: true
+    mode_order: [skip, standard, strict-tdd]
+    resolution:
+      matching: all-rows
+      mode: strictest-wins
+      evidence: union
+    bindings:
+      - id: shell-unit
+        method: unit
+        scope: shell-overlay
+        signature_coverage: apply transforms and contract fixtures
+        command: bash tests/run.sh
+        command_declaration: README.md:62-65; .github/workflows/test.yml:27-28
+        tool_proof: README.md:15; .github/workflows/test.yml:16
+      - id: shell-lint
+        method: lint
+        scope: shell-overlay
+        signature_coverage: apply.sh and tests/run.sh
+        command: shellcheck --severity=warning apply.sh tests/run.sh
+        command_declaration: .github/workflows/test.yml:25-26
+        tool_proof: .github/workflows/test.yml:18-22
+    rows:
+      - signature: source implementation changes in apply.sh or tests
+        mode: standard
+        disciplines: [unit, lint]
+        evidence_binding_refs: [shell-unit, shell-lint]
+        source: generated
+      - signature: boundary/API or CLI behavior changes in apply.sh
+        mode: standard
+        disciplines: [unit, lint]
+        evidence_binding_refs: [shell-unit, shell-lint]
+        source: generated
+      - signature: documentation-only changes
+        mode: skip
+        disciplines: []
+        evidence_binding_refs: []
+        source: generated
+      - signature: default unmatched production diff
+        mode: standard
+        disciplines: [unit, lint]
+        evidence_binding_refs: [shell-unit, shell-lint]
+        source: generated
+  capabilities:
+    - method: unit
+      scope: shell-overlay
+      signature_coverage: apply transforms and contract fixtures
+      command: bash tests/run.sh
+      command_declaration: README.md:62-65; .github/workflows/test.yml:27-28
+      tool_proof: README.md:15; .github/workflows/test.yml:16
+    - method: lint
+      scope: shell-overlay
+      signature_coverage: apply.sh and tests/run.sh
+      command: shellcheck --severity=warning apply.sh tests/run.sh
+      command_declaration: .github/workflows/test.yml:25-26
+      tool_proof: .github/workflows/test.yml:18-22
+  detected_but_unsatisfied:
+    - method: integration
+      reason: no distinct integration command or reproducible integration dependency
+    - method: e2e
+      reason: no e2e framework or command declared
+    - method: coverage
+      reason: no coverage command declared
+    - method: typecheck
+      reason: no type checker declared
+    - method: format
+      reason: no formatter command declared
+    - method: build
+      reason: no build command declared
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes.
+  specs:
+    - Use Given/When/Then scenarios and RFC 2119 keywords.
+  design:
+    - Document architecture decisions with rationale.
+  tasks:
+    - Group tasks by phase and keep them completable in one session.
+  apply:
+    guidelines:
+      - Follow existing fail-closed shell patterns.
+    tdd: false
+    test_command: bash tests/run.sh
+  verify:
+    test_command: bash tests/run.sh
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas.

@@ -183,13 +183,14 @@ EOF
 )
 
 test_rubric_list_replaces_legacy_item4() (
-  local home="$TMP_ROOT/rubric-list-home" backups="$TMP_ROOT/rubric-list-backups" md json loose before json_before transformed expected loose_expected
+  local home="$TMP_ROOT/rubric-list-home" backups="$TMP_ROOT/rubric-list-backups" md json loose before json_before transformed retransformed expected loose_expected
   md="$home/.pi/agent/APPEND_SYSTEM.md"
   json="$home/.config/opencode/opencode.json"
   loose="$home/.pi/agent/LEGACY_PROSE.md"
   before="$TMP_ROOT/rubric-list-before.md"
   json_before="$TMP_ROOT/rubric-list-before.json"
   transformed="$TMP_ROOT/rubric-list-transformed.md"
+  retransformed="$TMP_ROOT/rubric-list-retransformed.md"
   expected="$TMP_ROOT/rubric-list-expected.md"
   loose_expected="$TMP_ROOT/rubric-list-loose-expected.md"
   mkdir -p "$(dirname -- "$md")" "$(dirname -- "$json")"
@@ -247,6 +248,8 @@ EOF
   } > "$loose_expected"
   rubric_transform_list < "$loose" > "$transformed" || fail 'legacy loose paragraph transform refused a valid fixture' || exit 1
   cmp -s "$transformed" "$loose_expected" || fail 'legacy loose paragraph was not migrated' || exit 1
+  rubric_transform_list < "$transformed" > "$retransformed" || fail 'canonical loose migration was refused' || exit 1
+  cmp -s "$retransformed" "$transformed" || fail 'rubric list transform required a second convergence pass' || exit 1
 )
 
 test_rubric_list_refuses_ambiguous_headings() (
@@ -334,7 +337,8 @@ test_cli_check_semantics() (
   [ ! -e "$backups/.pi/agent/agents/sdd-init.md" ] || fail '--check created an init-agent backup' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
   grep -Fq 'matching rubric row and forward' "$file" && fail 'CLI retained stale item 4 body' && exit 1
-  grep -Fq 'change against ALL matching non-default rows' "$file" || fail 'CLI did not install current item 4 body' || exit 1
+  grep -Fq 'RubricConsumerEnvelopeV1' "$file" || fail 'CLI did not install consumer envelope wording' || exit 1
+  grep -Fq 'never fall back to rubric `default` or binary `strict_tdd`' "$file" || fail 'CLI did not install fail-closed fallback wording' || exit 1
   grep -Fq 'Following cache prose must survive unchanged.' "$file" || fail 'CLI consumed following cache prose' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
   rc=$?
@@ -389,14 +393,22 @@ test_installed_hosts_fallback_includes_gemini() (
   installed_hosts | grep -Fqx 'gemini-cli' || fail 'fallback host list omitted Gemini CLI' || exit 1
 )
 
-test_sdd_init_host_rows_cover_cursor_and_copilot() (
-  local home="$TMP_ROOT/skills-hosts-home" backups="$TMP_ROOT/skills-hosts-backups"
+test_sdd_init_rubric_reference_host_rows() (
+  local home="$TMP_ROOT/skills-hosts-home" backups="$TMP_ROOT/skills-hosts-backups" row
   mkdir -p "$home"
   load_overlay "$home" "$backups"
-  host_rows | grep -Fqx 'cursor|sdd-init-skill|.cursor/skills/sdd-init/SKILL.md' || fail 'Cursor sdd-init skill row is missing' || exit 1
-  host_rows | grep -Fqx 'cursor|sdd-init-details|.cursor/skills/sdd-init/references/init-details.md' || fail 'Cursor sdd-init details row is missing' || exit 1
-  host_rows | grep -Fqx 'vscode-copilot|sdd-init-skill|.copilot/skills/sdd-init/SKILL.md' || fail 'Copilot sdd-init skill row is missing' || exit 1
-  host_rows | grep -Fqx 'vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md' || fail 'Copilot sdd-init details row is missing' || exit 1
+  for row in \
+    'claude-code|sdd-init-rubric-reference|.claude/skills/sdd-init/references/rubric-authoring.md' \
+    'pi|sdd-init-rubric-reference|.pi/agent/agents/references/rubric-authoring.md' \
+    'opencode|sdd-init-rubric-reference|.config/opencode/skills/sdd-init/references/rubric-authoring.md' \
+    'opencode|sdd-init-prompt|.config/opencode/prompts/sdd/sdd-init.md' \
+    'codex|sdd-init-rubric-reference|.codex/skills/sdd-init/references/rubric-authoring.md' \
+    'cursor|sdd-init-rubric-reference|.cursor/skills/sdd-init/references/rubric-authoring.md' \
+    'vscode-copilot|sdd-init-rubric-reference|.copilot/skills/sdd-init/references/rubric-authoring.md' \
+    'gemini-cli|sdd-init-rubric-reference|.gemini/skills/sdd-init/references/rubric-authoring.md' \
+    'antigravity|sdd-init-rubric-reference|@antigravity-skills@/sdd-init/references/rubric-authoring.md'; do
+    host_rows | grep -Fqx "$row" || fail "missing managed rubric authoring reference row: $row" || exit 1
+  done
 )
 
 test_antigravity_skill_root_resolution() (
@@ -422,6 +434,106 @@ Installer-owned introduction.
 Installer-owned decisions.
 EOF
 }
+
+write_opencode_sdd_init_prompt_stock() {
+  cat <<'EOF'
+---
+name: sdd-init
+---
+
+OpenCode executor instructions.
+
+## Decision Gates
+
+Installer-owned decisions.
+EOF
+}
+
+# OpenCode permits a file prompt reference for hidden agents. Accept the exact
+# managed entrypoint only, so a fixture cannot resolve a traversal or another
+# configuration-relative path.
+resolve_opencode_sdd_init_prompt() {
+  local home="$1" config prompt
+  config="$home/.config/opencode/opencode.json"
+  prompt="$(jq -er '.agent["sdd-init"].prompt | strings' "$config")" || return 1
+  [ "$prompt" = '{file:./prompts/sdd/sdd-init.md}' ] || return 1
+  printf '%s\n' "$home/.config/opencode/prompts/sdd/sdd-init.md"
+}
+
+test_opencode_sdd_init_prompt_lifecycle_and_reachability() (
+  local home="$TMP_ROOT/opencode-init-prompt-home" backups="$TMP_ROOT/opencode-init-prompt-backups" \
+    missing_backups="$TMP_ROOT/opencode-init-prompt-missing-backups" \
+    duplicate_backups="$TMP_ROOT/opencode-init-prompt-duplicate-backups" \
+    drift_backups="$TMP_ROOT/opencode-init-prompt-drift-backups" \
+    config file before snapshot replacement
+  config="$home/.config/opencode/opencode.json"
+  file="$home/.config/opencode/prompts/sdd/sdd-init.md"
+  mkdir -p "$(dirname -- "$config")" "$(dirname -- "$file")"
+  jq -n '{agent: {"sdd-init": {prompt: "{file:./prompts/sdd/sdd-init.md}"}}}' > "$config"
+  write_opencode_sdd_init_prompt_stock > "$file"
+  cp -- "$file" "$TMP_ROOT/opencode-init-prompt-before.md"
+
+  load_overlay "$home" "$backups"
+  [ "$(resolve_opencode_sdd_init_prompt "$home")" = "$file" ] || fail 'OpenCode sdd-init prompt did not resolve to the managed entrypoint' || exit 1
+  jq -n '{agent: {"sdd-init": {prompt: "{file:../outside.md}"}}}' > "$config"
+  resolve_opencode_sdd_init_prompt "$home" >/dev/null && fail 'OpenCode sdd-init prompt accepted an unsafe path' && exit 1
+  jq -n '{agent: {"sdd-init": {prompt: "{file:./prompts/sdd/sdd-init.md}"}}}' > "$config"
+
+  CHECK_ONLY=1
+  expect_rc 0 init_rubric_apply "$file" skill || exit 1
+  cmp -s "$file" "$TMP_ROOT/opencode-init-prompt-before.md" || fail 'OpenCode sdd-init --check changed the executable prompt' || exit 1
+  [ ! -e "$backups/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'OpenCode sdd-init --check created a backup' || exit 1
+  CHECK_ONLY=0
+  expect_rc 0 init_rubric_apply "$file" skill || exit 1
+  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$file" || fail 'OpenCode executable prompt lacks the managed rubric marker' || exit 1
+  grep -Fq 'single writer of project TDD policy' "$file" || fail 'OpenCode executable prompt lacks the managed contract' || exit 1
+  cmp -s "$TMP_ROOT/opencode-init-prompt-before.md" "$backups/.config/opencode/prompts/sdd/sdd-init.md" || fail 'OpenCode executable prompt backup is not original' || exit 1
+  expect_rc 1 init_rubric_apply "$file" skill || exit 1
+
+  cat > "$file" <<'EOF'
+Before managed section.
+<!-- gentle-ai:sdd-init-rubric -->
+stale managed content
+<!-- /gentle-ai:sdd-init-rubric -->
+
+## Decision Gates
+
+After managed section.
+EOF
+  load_overlay "$home" "$TMP_ROOT/opencode-init-prompt-replacement-backups"
+  expect_rc 0 init_rubric_apply "$file" skill || exit 1
+  grep -Fq 'stale managed content' "$file" && fail 'OpenCode executable prompt retained stale managed content' && exit 1
+  grep -Fq 'After managed section.' "$file" || fail 'OpenCode executable prompt replacement changed surrounding content' || exit 1
+
+  printf '%s\n' 'no decision anchor' > "$file"
+  cp -- "$file" "$TMP_ROOT/opencode-init-prompt-missing-before.md"
+  load_overlay "$home" "$missing_backups"
+  expect_rc 3 init_rubric_apply "$file" skill || exit 1
+  cmp -s "$file" "$TMP_ROOT/opencode-init-prompt-missing-before.md" || fail 'missing-anchor executable prompt changed' || exit 1
+  [ ! -e "$missing_backups/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'missing-anchor executable prompt was backed up' || exit 1
+
+  {
+    write_opencode_sdd_init_prompt_stock
+    printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'one' '<!-- /gentle-ai:sdd-init-rubric -->'
+    printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'two' '<!-- /gentle-ai:sdd-init-rubric -->'
+  } > "$file"
+  cp -- "$file" "$TMP_ROOT/opencode-init-prompt-duplicate-before.md"
+  load_overlay "$home" "$duplicate_backups"
+  expect_rc 3 init_rubric_apply "$file" skill || exit 1
+  cmp -s "$file" "$TMP_ROOT/opencode-init-prompt-duplicate-before.md" || fail 'duplicate-marker executable prompt changed' || exit 1
+  [ ! -e "$duplicate_backups/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'duplicate-marker executable prompt was backed up' || exit 1
+
+  write_opencode_sdd_init_prompt_stock > "$file"
+  load_overlay "$home" "$drift_backups"
+  snapshot="$(target_tmp "$file")"
+  replacement="$(target_tmp "$file")"
+  cp -p -- "$file" "$snapshot"
+  printf '%s\n' 'replacement output' > "$replacement"
+  printf '%s\n' 'concurrent writer' > "$file"
+  expect_rc 5 commit_replacement "$file" "$snapshot" "$replacement" || exit 1
+  grep -Fqx 'concurrent writer' "$file" || fail 'drifted executable prompt was overwritten' || exit 1
+  rm -f -- "$snapshot" "$replacement"
+)
 
 write_init_details_stock() {
   cat <<'EOF'
@@ -519,22 +631,34 @@ test_init_rubric_shared_skill_idempotence_and_backup() (
 )
 
 test_init_rubric_reference_and_pi_idempotence() (
-  local home="$TMP_ROOT/init-reference-home" backups="$TMP_ROOT/init-reference-backups" reference pi
+  local home="$TMP_ROOT/init-reference-home" backups="$TMP_ROOT/init-reference-backups" reference authoring pi pi_authoring expected
   reference="$home/.claude/skills/sdd-init/references/init-details.md"
+  authoring="$home/.claude/skills/sdd-init/references/rubric-authoring.md"
   pi="$home/.pi/agent/agents/sdd-init.md"
+  pi_authoring="$home/.pi/agent/agents/references/rubric-authoring.md"
+  expected="$TMP_ROOT/rubric-authoring.expected"
   mkdir -p "$(dirname -- "$reference")" "$(dirname -- "$pi")"
   write_init_details_stock > "$reference"
   write_pi_init_stock > "$pi"
 
   load_overlay "$home" "$backups"
   expect_rc 0 init_rubric_apply "$reference" details || exit 1
+  expect_rc 0 init_rubric_reference_apply "$authoring" || exit 1
   expect_rc 0 init_rubric_apply "$pi" pi || exit 1
+  expect_rc 0 init_rubric_reference_apply "$pi_authoring" || exit 1
+  printf '%s\n' "$INIT_RUBRIC_REFERENCE" > "$expected"
+  cmp -s "$expected" "$authoring" || fail 'installed rubric authoring reference is not source-bound' || exit 1
+  cmp -s "$expected" "$pi_authoring" || fail 'Pi rubric authoring reference is not source-bound' || exit 1
+  grep -Fq 'Build two independent inventories' "$authoring" || fail 'installed reference lacks rubric inference method' || exit 1
+  grep -Fq 'MUST read `references/rubric-authoring.md`' "$pi" || fail 'Pi executor does not require reference loading' || exit 1
   grep -Fq 'closed vocabulary' "$reference" || fail 'reference lacks closed evidence vocabulary' || exit 1
   grep -Fq 'openspec/config.yaml' "$reference" || fail 'reference lacks OpenSpec persistence contract' || exit 1
   grep -Fq 'allowed_answers: strict|rubric' "$pi" || fail 'Pi agent lacks blocking answer domain' || exit 1
   grep -Fq 'STOP: do not continue to downstream phases.' "$pi" || fail 'Pi agent lacks blocking stop instruction' || exit 1
   expect_rc 1 init_rubric_apply "$reference" details || exit 1
+  expect_rc 1 init_rubric_reference_apply "$authoring" || exit 1
   expect_rc 1 init_rubric_apply "$pi" pi || exit 1
+  expect_rc 1 init_rubric_reference_apply "$pi_authoring" || exit 1
 )
 
 test_init_rubric_replaces_complete_section() (
@@ -615,8 +739,9 @@ run test_symlink_refusal
 run test_backup_failure_is_closed
 run test_target_drift_is_closed
 run test_installed_hosts_fallback_includes_gemini
-run test_sdd_init_host_rows_cover_cursor_and_copilot
+run test_sdd_init_rubric_reference_host_rows
 run test_antigravity_skill_root_resolution
+run test_opencode_sdd_init_prompt_lifecycle_and_reachability
 run test_init_rubric_source_shape_refusal
 run test_init_rubric_refuses_anchor_inside_managed_section
 run test_init_rubric_shared_skill_idempotence_and_backup
@@ -625,6 +750,9 @@ run test_init_rubric_replaces_complete_section
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
 
 bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-consumer-gate.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-benchmark.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+bash "$ROOT/tests/rubric-compiler-semantic-evaluation.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

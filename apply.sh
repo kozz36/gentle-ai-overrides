@@ -62,6 +62,8 @@ CHANGED=0
 #                    -> the loose-paragraph shape is the only one that fits
 #   rubric-json      opencode.json -> .agent["gentle-orchestrator"].prompt (carries the list)
 #   rubric-none      host has no strict-TDD forwarding section; nothing to inject
+#   sdd-init-prompt  OpenCode's executable sdd-init prompt; unlike the skill and
+#                    reference support files, this is the hidden agent's runtime entrypoint
 #   pi-models        pi's sdd-model-assignments block -> host-agnostic `inherit`
 #                    (pi routes phases via ~/.pi/gentle-ai/models.json; the Claude
 #                     aliases gentle-ai renders there are unresolvable). pi ONLY.
@@ -73,35 +75,44 @@ claude-code|persona-split-neutral|.claude/output-styles/neutral.md
 claude-code|rubric-prose|.claude/skills/_shared/sdd-orchestrator-workflow.md
 claude-code|sdd-init-skill|.claude/skills/sdd-init/SKILL.md
 claude-code|sdd-init-details|.claude/skills/sdd-init/references/init-details.md
+claude-code|sdd-init-rubric-reference|.claude/skills/sdd-init/references/rubric-authoring.md
 pi|persona-marked|.pi/agent/APPEND_SYSTEM.md
 pi|rubric-list|.pi/agent/APPEND_SYSTEM.md
 pi|pi-models|.pi/agent/APPEND_SYSTEM.md
 pi|sdd-init-pi|.pi/agent/agents/sdd-init.md
+pi|sdd-init-rubric-reference|.pi/agent/agents/references/rubric-authoring.md
 opencode|persona-marked|.config/opencode/AGENTS.md
 opencode|rubric-json|.config/opencode/opencode.json
 opencode|engram-idempotent|.config/opencode/plugins/engram.ts
 opencode|sdd-init-skill|.config/opencode/skills/sdd-init/SKILL.md
 opencode|sdd-init-details|.config/opencode/skills/sdd-init/references/init-details.md
+opencode|sdd-init-rubric-reference|.config/opencode/skills/sdd-init/references/rubric-authoring.md
+opencode|sdd-init-prompt|.config/opencode/prompts/sdd/sdd-init.md
 codex|persona-headed|.codex/AGENTS.md
 codex|rubric-none|.codex/AGENTS.md
 codex|sdd-init-skill|.codex/skills/sdd-init/SKILL.md
 codex|sdd-init-details|.codex/skills/sdd-init/references/init-details.md
+codex|sdd-init-rubric-reference|.codex/skills/sdd-init/references/rubric-authoring.md
 cursor|persona-headed|.cursor/rules/gentle-ai.mdc
 cursor|rubric-list|.cursor/rules/gentle-ai.mdc
 cursor|sdd-init-skill|.cursor/skills/sdd-init/SKILL.md
 cursor|sdd-init-details|.cursor/skills/sdd-init/references/init-details.md
+cursor|sdd-init-rubric-reference|.cursor/skills/sdd-init/references/rubric-authoring.md
 vscode-copilot|persona-headed|.config/Code/User/prompts/gentle-ai.instructions.md
 vscode-copilot|rubric-list|.config/Code/User/prompts/gentle-ai.instructions.md
 vscode-copilot|sdd-init-skill|.copilot/skills/sdd-init/SKILL.md
 vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md
+vscode-copilot|sdd-init-rubric-reference|.copilot/skills/sdd-init/references/rubric-authoring.md
 gemini-cli|persona-marked|.gemini/GEMINI.md
 gemini-cli|rubric-list|.gemini/GEMINI.md
 gemini-cli|sdd-init-skill|.gemini/skills/sdd-init/SKILL.md
 gemini-cli|sdd-init-details|.gemini/skills/sdd-init/references/init-details.md
+gemini-cli|sdd-init-rubric-reference|.gemini/skills/sdd-init/references/rubric-authoring.md
 antigravity|persona-marked|.gemini/GEMINI.md
 antigravity|rubric-list|.gemini/GEMINI.md
 antigravity|sdd-init-skill|@antigravity-skills@/sdd-init/SKILL.md
 antigravity|sdd-init-details|@antigravity-skills@/sdd-init/references/init-details.md
+antigravity|sdd-init-rubric-reference|@antigravity-skills@/sdd-init/references/rubric-authoring.md
 ROWS
 }
 
@@ -440,9 +451,11 @@ rubric_transform_list() {
 
       for (i = 1; i <= n; i++) {
         if (replace4) {
-          # A list item ends at the next non-indented nonblank line.
-          if (line[i] ~ /^[^ \t]/) replace4 = 0
-          else continue
+          # Drop only indented continuation lines. A blank line terminates the
+          # item and must survive as the separator before following prose.
+          if (line[i] ~ /^[ \t]*$/) replace4 = 0
+          else if (line[i] ~ /^[ \t]/) continue
+          else replace4 = 0
         }
         if (drop[i]) continue
         if (i == item4_at) {
@@ -519,11 +532,11 @@ OPENCODE_ENGRAM_STOCK_BLOCK='    "experimental.chat.system.transform": async (in
 # unique: partial or ambiguous templates are refused before a backup or write.
 # ---------------------------------------------------------------------------
 # This source delta is security-sensitive input to every new producer surface.
-# Validate its complete three-shape grammar without changing legacy extractors.
+# Validate its complete four-shape grammar without changing legacy extractors.
 extract_init_rubric_shape() {
   local wanted="$1"
   awk -v wanted="$wanted" '
-    BEGIN { expected["skill"] = expected["details"] = expected["pi"] = 1 }
+     BEGIN { expected["skill"] = expected["details"] = expected["pi"] = expected["reference"] = 1 }
     /^<!-- shape:[a-z][a-z0-9-]* -->$/ {
       name = $0; sub(/^<!-- shape:/, "", name); sub(/ -->$/, "", name)
       if (!(name in expected) || opened[name] || inside) bad = 1
@@ -549,10 +562,11 @@ extract_init_rubric_shape() {
 INIT_RUBRIC_SKILL="$(extract_init_rubric_shape skill)" || { echo "FATAL: invalid $INIT_RUBRIC_FILE shape markers" >&2; exit 1; }
 INIT_RUBRIC_DETAILS="$(extract_init_rubric_shape details)" || { echo "FATAL: invalid $INIT_RUBRIC_FILE shape markers" >&2; exit 1; }
 INIT_RUBRIC_PI="$(extract_init_rubric_shape pi)" || { echo "FATAL: invalid $INIT_RUBRIC_FILE shape markers" >&2; exit 1; }
+INIT_RUBRIC_REFERENCE="$(extract_init_rubric_shape reference)" || { echo "FATAL: invalid $INIT_RUBRIC_FILE shape markers" >&2; exit 1; }
 INIT_RUBRIC_OPEN='<!-- gentle-ai:sdd-init-rubric -->'
 INIT_RUBRIC_CLOSE='<!-- /gentle-ai:sdd-init-rubric -->'
 
-[ -n "$INIT_RUBRIC_SKILL" ] && [ -n "$INIT_RUBRIC_DETAILS" ] && [ -n "$INIT_RUBRIC_PI" ] || {
+[ -n "$INIT_RUBRIC_SKILL" ] && [ -n "$INIT_RUBRIC_DETAILS" ] && [ -n "$INIT_RUBRIC_PI" ] && [ -n "$INIT_RUBRIC_REFERENCE" ] || {
   echo "FATAL: $INIT_RUBRIC_FILE is missing one of the shape blocks" >&2; exit 1; }
 
 init_rubric_transform() {
@@ -609,6 +623,55 @@ init_rubric_apply() {
   commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
   rm -f -- "$tmp" "$snapshot"
   return "$rc"
+}
+
+# The reference is a complete managed file, unlike the marker-bounded skill
+# sections. Create it only below an existing safe references directory; replace
+# a regular existing file atomically and never follow a link.
+init_rubric_reference_apply() {
+  local file="$1" parent grandparent tmp rc
+  parent="$(dirname -- "$file")"
+  if [ ! -e "$parent" ] && [ ! -L "$parent" ]; then
+    grandparent="$(dirname -- "$parent")"
+    [ -d "$grandparent" ] && [ ! -L "$grandparent" ] || return 4
+    if [ "$CHECK_ONLY" -eq 1 ]; then return 0; fi
+    mkdir -- "$parent" || return 4
+  fi
+  [ -d "$parent" ] && [ ! -L "$parent" ] || return 4
+
+  tmp="$(target_tmp "$file")" || return 4
+  if ! printf '%s\n' "$INIT_RUBRIC_REFERENCE" > "$tmp" || ! chmod 644 "$tmp"; then
+    rm -f -- "$tmp"
+    return 4
+  fi
+
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    if ! safe_target "$file"; then
+      rm -f -- "$tmp"
+      return 4
+    fi
+    if cmp -s "$tmp" "$file"; then
+      rm -f -- "$tmp"
+      return 1
+    fi
+    if [ "$CHECK_ONLY" -eq 1 ]; then
+      rm -f -- "$tmp"
+      return 0
+    fi
+    commit_replacement "$file" "$file" "$tmp"; rc=$?
+    rm -f -- "$tmp"
+    return "$rc"
+  fi
+
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    rm -f -- "$tmp"
+    return 0
+  fi
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    rm -f -- "$tmp"
+    return 5
+  fi
+  mv -- "$tmp" "$file" || { rm -f -- "$tmp"; return 4; }
 }
 
 PI_MARK_OPEN='<!-- gentle-ai:sdd-model-assignments -->'
@@ -845,12 +908,12 @@ while IFS= read -r host; do
     file="$HOME/$rel"
     short="${rel}"
 
-    if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    if [ ! -e "$file" ] && [ ! -L "$file" ] && [ "$surface" != sdd-init-rubric-reference ]; then
       report "MISSING-FILE" "$surface" "$short"
       MISSING_ANCHOR=1
       continue
     fi
-    if ! safe_target "$file"; then
+    if { [ -e "$file" ] || [ -L "$file" ]; } && ! safe_target "$file"; then
       report "UNSAFE-TARGET" "$surface" "$short"
       OPERATION_FAILED=1
       break 2
@@ -929,11 +992,12 @@ while IFS= read -r host; do
           *) report "WRITE-FAILED" "engram" "$short (idempotent injection)"; OPERATION_FAILED=1 ;;
         esac
         ;;
-      sdd-init-skill|sdd-init-details|sdd-init-pi)
+      sdd-init-skill|sdd-init-details|sdd-init-pi|sdd-init-prompt)
         case "$surface" in
           sdd-init-skill) shape=skill ;;
           sdd-init-details) shape=details ;;
           sdd-init-pi) shape=pi ;;
+          sdd-init-prompt) shape=skill ;;
         esac
         init_rubric_apply "$file" "$shape"; rc=$?
         case "$rc" in
@@ -944,6 +1008,17 @@ while IFS= read -r host; do
           4) report "WRITE-FAILED" "sdd-init-rubric" "$short"; OPERATION_FAILED=1 ;;
           5) report "TARGET-DRIFT" "sdd-init-rubric" "$short"; TARGET_DRIFT=1 ;;
           *) report "WRITE-FAILED" "sdd-init-rubric" "$short"; OPERATION_FAILED=1 ;;
+        esac
+        ;;
+      sdd-init-rubric-reference)
+        init_rubric_reference_apply "$file"; rc=$?
+        case "$rc" in
+          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "sdd-init-rubric-reference" "$short"; PENDING=1
+             else report "applied" "sdd-init-rubric-reference" "$short"; CHANGED=1; fi ;;
+          1) report "already-applied" "sdd-init-rubric-reference" "$short" ;;
+          4) report "WRITE-FAILED" "sdd-init-rubric-reference" "$short"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "sdd-init-rubric-reference" "$short"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "sdd-init-rubric-reference" "$short"; OPERATION_FAILED=1 ;;
         esac
         ;;
       rubric-none)

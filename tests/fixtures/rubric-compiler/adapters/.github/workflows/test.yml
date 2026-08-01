@@ -1,0 +1,5 @@
+strategy:
+  matrix:
+    os: [ubuntu-latest, macos-latest]
+runs-on: ${{ matrix.os }}
+run: bash tests/run.sh
