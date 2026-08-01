@@ -1,0 +1,9 @@
+task_id	predicted_mode	predicted_evidence	task_fixture_sha256	producer_input
+gentle-h001	skip	go-unit	2a08207c4a0bb299c702bba453326c9d4ca7beeee6ff20ef8a635f5e759d920b	repo-ffbcc12f+api-exact-commits|tasks-2a08207c|policy-task-intent-baseline-v1|model-openai-gpt-5.6-terra
+gentle-h002	strict-tdd	go-unit,go-build,go-format-ci,go-vet-ci	2a08207c4a0bb299c702bba453326c9d4ca7beeee6ff20ef8a635f5e759d920b	repo-ffbcc12f+api-exact-commits|tasks-2a08207c|policy-task-intent-baseline-v1|model-openai-gpt-5.6-terra
+gentle-h003	strict-tdd	go-unit,go-build,go-format-ci,go-vet-ci	2a08207c4a0bb299c702bba453326c9d4ca7beeee6ff20ef8a635f5e759d920b	repo-ffbcc12f+api-exact-commits|tasks-2a08207c|policy-task-intent-baseline-v1|model-openai-gpt-5.6-terra
+gentle-h004	strict-tdd	go-unit,go-build,go-format-ci,go-vet-ci	2a08207c4a0bb299c702bba453326c9d4ca7beeee6ff20ef8a635f5e759d920b	repo-ffbcc12f+api-exact-commits|tasks-2a08207c|policy-task-intent-baseline-v1|model-openai-gpt-5.6-terra
+gentle-h005	strict-tdd	go-unit,go-build,go-format-ci,go-vet-ci	2a08207c4a0bb299c702bba453326c9d4ca7beeee6ff20ef8a635f5e759d920b	repo-ffbcc12f+api-exact-commits|tasks-2a08207c|policy-task-intent-baseline-v1|model-openai-gpt-5.6-terra
+gentle-h006	strict-tdd	go-unit,go-build,go-format-ci,go-vet-ci	2a08207c4a0bb299c702bba453326c9d4ca7beeee6ff20ef8a635f5e759d920b	repo-ffbcc12f+api-exact-commits|tasks-2a08207c|policy-task-intent-baseline-v1|model-openai-gpt-5.6-terra
+gentle-h007	standard	go-unit,go-build,go-format-ci,go-vet-ci	2a08207c4a0bb299c702bba453326c9d4ca7beeee6ff20ef8a635f5e759d920b	repo-ffbcc12f+api-exact-commits|tasks-2a08207c|policy-task-intent-baseline-v1|model-openai-gpt-5.6-terra
+gentle-h008	strict-tdd	go-unit,go-build,go-format-ci,go-vet-ci	2a08207c4a0bb299c702bba453326c9d4ca7beeee6ff20ef8a635f5e759d920b	repo-ffbcc12f+api-exact-commits|tasks-2a08207c|policy-task-intent-baseline-v1|model-openai-gpt-5.6-terra

@@ -1,0 +1,18 @@
+# Scorer-only CNSIC oracle. Repository-only checks must not read this fixture.
+# signature-id|policy-identity|canonical-binding-identities
+backend-source|standard:unit|backend-unit
+backend-tests|standard:unit|backend-unit
+agent-tools|standard:unit|backend-unit
+api-boundary|strict-tdd:unit+integration|backend-unit,backend-integration
+migration|strict-tdd:unit+integration+build|backend-unit,backend-integration,container-build
+db-schema|strict-tdd:unit+integration+build|backend-unit,backend-integration,container-build
+frontend-source|strict-tdd:unit+lint+build|frontend-unit,frontend-lint,frontend-build
+frontend-visible|strict-tdd:unit+lint+build+e2e|frontend-unit,frontend-lint,frontend-build,frontend-e2e
+frontend-assets|standard:build|frontend-build
+container|standard:build|container-build
+compose|standard:build|container-build
+dependencies|standard:unit+build|backend-unit,frontend-build
+changelog|skip:empty|-
+documentation|skip:empty|-
+scripts|skip:empty|-
+default|standard:empty|-
