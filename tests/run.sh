@@ -308,7 +308,7 @@ test_rubric_list_refuses_ambiguous_headings() (
 test_cli_check_semantics() (
   local home="$TMP_ROOT/cli-home" backups="$TMP_ROOT/cli-backups" file init_file rc
   file="$home/.pi/agent/APPEND_SYSTEM.md"
-  init_file="$home/.pi/agent/agents/sdd-init.md"
+  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
   mkdir -p "$home/.gentle-ai" "$(dirname -- "$file")" "$(dirname -- "$init_file")"
   printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
   {
@@ -331,7 +331,7 @@ test_cli_check_semantics() (
   rc=$?
   [ "$rc" -eq 2 ] || fail "expected --check pending rc 2, got $rc" || exit 1
   [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail '--check created a backup' || exit 1
-  [ ! -e "$backups/.pi/agent/agents/sdd-init.md" ] || fail '--check created an init-agent backup' || exit 1
+  [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" ] || fail '--check created an init-agent backup' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
   grep -Fq 'matching rubric row and forward' "$file" && fail 'CLI retained stale item 4 body' && exit 1
   grep -Fq 'RubricConsumerEnvelopeV1' "$file" || fail 'CLI did not install consumer envelope wording' || exit 1
@@ -398,7 +398,10 @@ test_sdd_init_host_rows_cover_cursor_and_copilot() (
   host_rows | grep -Fqx 'cursor|sdd-init-details|.cursor/skills/sdd-init/references/init-details.md' || fail 'Cursor sdd-init details row is missing' || exit 1
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-skill|.copilot/skills/sdd-init/SKILL.md' || fail 'Copilot sdd-init skill row is missing' || exit 1
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md' || fail 'Copilot sdd-init details row is missing' || exit 1
-  host_rows | grep -Fqx 'opencode|sdd-init-prompt|.config/opencode/prompts/sdd/sdd-init.md' || fail 'OpenCode executable sdd-init prompt row is missing' || exit 1
+  host_rows | grep -Fqx 'claude-code|persona-split-style|.claude/output-styles/gentleman.md' || fail 'Claude gentleman style row is missing' || exit 1
+  host_rows | grep -Fqx 'pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md' || fail 'Pi packaged sdd-init asset row is missing' || exit 1
+  host_rows | grep -Fqx 'opencode|sdd-init-delegation|.config/opencode/opencode.json' || fail 'OpenCode inline sdd-init delegation row is missing' || exit 1
+  ! host_rows | grep -Fq 'opencode|sdd-init-prompt|' || fail 'OpenCode prompt-file requirement remains mapped' || exit 1
 )
 
 test_antigravity_skill_root_resolution() (
@@ -425,84 +428,23 @@ Installer-owned decisions.
 EOF
 }
 
-resolve_opencode_sdd_init_prompt() {
-  local home="$1" config prompt
+test_opencode_sdd_init_inline_delegation_validation() (
+  local home="$TMP_ROOT/opencode-init-inline-home" backups="$TMP_ROOT/opencode-init-inline-backups" config
   config="$home/.config/opencode/opencode.json"
-  prompt="$(jq -er '.agent["sdd-init"].prompt | strings' "$config")" || return 1
-  [ "$prompt" = '{file:./prompts/sdd/sdd-init.md}' ] || return 1
-  printf '%s\n' "$home/.config/opencode/prompts/sdd/sdd-init.md"
-}
-
-test_opencode_sdd_init_prompt_lifecycle_and_reachability() (
-  local home="$TMP_ROOT/opencode-init-prompt-home" backups="$TMP_ROOT/opencode-init-prompt-backups" \
-    missing_backups="$TMP_ROOT/opencode-init-prompt-missing-backups" \
-    duplicate_backups="$TMP_ROOT/opencode-init-prompt-duplicate-backups" \
-    config file before snapshot replacement
-  config="$home/.config/opencode/opencode.json"
-  file="$home/.config/opencode/prompts/sdd/sdd-init.md"
-  before="$TMP_ROOT/opencode-init-prompt-before.md"
-  mkdir -p "$(dirname -- "$config")" "$(dirname -- "$file")"
-  jq -n '{agent: {"sdd-init": {prompt: "{file:./prompts/sdd/sdd-init.md}"}}}' > "$config"
-  write_init_skill_stock > "$file"
-  cp -- "$file" "$before"
+  mkdir -p "$(dirname -- "$config")"
+  write_opencode_init_config "$config"
 
   load_overlay "$home" "$backups"
-  [ "$(resolve_opencode_sdd_init_prompt "$home")" = "$file" ] || fail 'OpenCode sdd-init prompt did not resolve to the managed entrypoint' || exit 1
-  CHECK_ONLY=1
-  expect_rc 0 init_rubric_apply "$file" skill || exit 1
-  cmp -s "$file" "$before" || fail 'OpenCode sdd-init --check changed the executable prompt' || exit 1
-  [ ! -e "$backups/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'OpenCode sdd-init --check created a backup' || exit 1
-  CHECK_ONLY=0
-  expect_rc 0 init_rubric_apply "$file" skill || exit 1
-  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$file" || fail 'OpenCode executable prompt lacks the managed rubric marker' || exit 1
-  grep -Fq 'single writer of project TDD policy' "$file" || fail 'OpenCode executable prompt lacks the managed contract' || exit 1
-  awk '/<!-- gentle-ai:sdd-init-rubric -->/{ marker = NR } /^## Decision Gates$/{ decision = NR } END { exit !(marker && decision && marker < decision) }' "$file" || fail 'OpenCode managed contract is not before the decision gate' || exit 1
-  cmp -s "$before" "$backups/.config/opencode/prompts/sdd/sdd-init.md" || fail 'OpenCode executable prompt backup is not original' || exit 1
-  expect_rc 1 init_rubric_apply "$file" skill || exit 1
-
-  cat > "$file" <<'EOF'
-Before managed section.
-<!-- gentle-ai:sdd-init-rubric -->
-stale managed content
-<!-- /gentle-ai:sdd-init-rubric -->
-
-## Decision Gates
-
-After managed section.
-EOF
-  load_overlay "$home" "$TMP_ROOT/opencode-init-prompt-replacement-backups"
-  expect_rc 0 init_rubric_apply "$file" skill || exit 1
-  grep -Fq 'stale managed content' "$file" && fail 'OpenCode executable prompt retained stale managed content' && exit 1
-  grep -Fq 'After managed section.' "$file" || fail 'OpenCode executable prompt replacement changed surrounding content' || exit 1
-
-  printf '%s\n' 'no decision anchor' > "$file"
-  cp -- "$file" "$TMP_ROOT/opencode-init-prompt-missing-before.md"
-  load_overlay "$home" "$missing_backups"
-  expect_rc 3 init_rubric_apply "$file" skill || exit 1
-  cmp -s "$file" "$TMP_ROOT/opencode-init-prompt-missing-before.md" || fail 'missing-anchor executable prompt changed' || exit 1
-  [ ! -e "$missing_backups/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'missing-anchor executable prompt was backed up' || exit 1
-
-  {
-    write_init_skill_stock
-    printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'one' '<!-- /gentle-ai:sdd-init-rubric -->'
-    printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'two' '<!-- /gentle-ai:sdd-init-rubric -->'
-  } > "$file"
-  cp -- "$file" "$TMP_ROOT/opencode-init-prompt-duplicate-before.md"
-  load_overlay "$home" "$duplicate_backups"
-  expect_rc 3 init_rubric_apply "$file" skill || exit 1
-  cmp -s "$file" "$TMP_ROOT/opencode-init-prompt-duplicate-before.md" || fail 'duplicate-marker executable prompt changed' || exit 1
-  [ ! -e "$duplicate_backups/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'duplicate-marker executable prompt was backed up' || exit 1
-
-  write_init_skill_stock > "$file"
-  load_overlay "$home" "$TMP_ROOT/opencode-init-prompt-drift-backups"
-  snapshot="$(target_tmp "$file")"
-  replacement="$(target_tmp "$file")"
-  cp -p -- "$file" "$snapshot"
-  printf '%s\n' 'replacement output' > "$replacement"
-  printf '%s\n' 'concurrent writer' > "$file"
-  expect_rc 5 commit_replacement "$file" "$snapshot" "$replacement" || exit 1
-  grep -Fqx 'concurrent writer' "$file" || fail 'drifted executable prompt was overwritten' || exit 1
-  rm -f -- "$snapshot" "$replacement"
+  opencode_sdd_init_delegates "$config" || fail 'OpenCode inline sdd-init prompt did not delegate to the managed skill' || exit 1
+  jq -n '{agent: {"sdd-init": {hidden: false, prompt: "Delegate to ~/.config/opencode/skills/sdd-init/SKILL.md."}}}' > "$config"
+  opencode_sdd_init_delegates "$config" && fail 'OpenCode visible sdd-init prompt passed hidden-agent validation' && exit 1
+  jq -n '{agent: {"sdd-init": {hidden: true, prompt: "Do not read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md."}}}' > "$config"
+  opencode_sdd_init_delegates "$config" && fail 'OpenCode refusal prompt passed delegation validation' && exit 1
+  jq -n '{agent: {"sdd-init": {prompt: "Delegate to another skill."}}}' > "$config"
+  opencode_sdd_init_delegates "$config" && fail 'OpenCode redirected sdd-init prompt passed reachability validation' && exit 1
+  jq -n '{agent: {}}' > "$config"
+  opencode_sdd_init_delegates "$config" && fail 'OpenCode missing sdd-init prompt passed reachability validation' && exit 1
+  :
 )
 
 write_init_details_stock() {
@@ -530,6 +472,158 @@ Pi executor instructions.
 Installer-owned persistence instructions.
 EOF
 }
+
+write_claude_split_stock() {
+  cat <<'EOF'
+<!-- gentle-ai:persona -->
+## Rules
+
+Installer-owned rules.
+
+## Expertise
+
+Installer-owned expertise.
+
+## Contextual Skill Loading (MANDATORY)
+
+Installer-owned skills.
+
+## Persona Voice
+
+Installer-owned voice.
+<!-- /gentle-ai:persona -->
+EOF
+}
+
+write_pi_append_stock() {
+  cat <<'EOF'
+<!-- gentle-ai:persona -->
+## Rules
+
+Installer-owned rules.
+
+## Personality
+
+Installer-owned personality.
+
+## Persona Scope
+
+Installer-owned scope.
+
+## Language
+
+Installer-owned language.
+
+## Tone
+
+Installer-owned tone.
+
+## Philosophy
+
+Installer-owned philosophy.
+
+## Expertise
+
+Installer-owned expertise.
+
+## Behavior
+
+Installer-owned behavior.
+
+## Contextual Skill Loading
+
+Installer-owned skills.
+<!-- /gentle-ai:persona -->
+3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction
+
+The orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.
+<!-- gentle-ai:sdd-model-assignments -->
+legacy model assignments
+<!-- /gentle-ai:sdd-model-assignments -->
+The orchestrator resolves skills from the registry ONCE and passes model aliases.
+Before the `sdd-propose` phase in interactive mode, offer the user a proposal question round.
+Only for a selected SDD route, delegate to these phase agents: sdd-init, sdd-explore, sdd-propose, sdd-spec, sdd-design, sdd-tasks, sdd-apply, sdd-verify, sdd-archive, sdd-onboard.
+| `sdd-propose` | exploration (optional) | `proposal` |
+EOF
+}
+
+write_opencode_init_config() {
+  local file="$1" orchestrator
+  orchestrator=$'3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction\n\nThe orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.'
+  jq -n --arg orchestrator "$orchestrator" '
+    {agent: {
+      "gentle-orchestrator": {prompt: $orchestrator},
+      "sdd-init": {hidden: true, prompt: "Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly."}
+    }}
+  ' > "$file"
+}
+
+# This fixture mirrors the active Claude, Pi, and OpenCode assets emitted by a
+# fresh Gentle AI 2.2.4 install. It must not create legacy compatibility paths.
+test_fresh_224_active_layout_lifecycle() (
+  local home="$TMP_ROOT/fresh-224-home" backups="$TMP_ROOT/fresh-224-backups" output rc config_before
+  local claude="$home/.claude/CLAUDE.md" gentleman="$home/.claude/output-styles/gentleman.md"
+  local pi="$home/.pi/agent/APPEND_SYSTEM.md" pi_init="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  local config="$home/.config/opencode/opencode.json" opencode_skill="$home/.config/opencode/skills/sdd-init/SKILL.md"
+
+  mkdir -p "$home/.gentle-ai" "$(dirname -- "$claude")" "$(dirname -- "$gentleman")" \
+    "$(dirname -- "$home/.claude/skills/_shared/sdd-orchestrator-workflow.md")" \
+    "$(dirname -- "$home/.claude/skills/sdd-init/references/init-details.md")" \
+    "$(dirname -- "$pi")" "$(dirname -- "$pi_init")" \
+    "$(dirname -- "$config")" "$(dirname -- "$home/.config/opencode/AGENTS.md")" \
+    "$(dirname -- "$home/.config/opencode/plugins/engram.ts")" \
+    "$(dirname -- "$opencode_skill")" \
+    "$(dirname -- "$home/.config/opencode/skills/sdd-init/references/init-details.md")"
+  printf '%s\n' '{"installed_agents":["claude-code","pi","opencode"]}' > "$home/.gentle-ai/state.json"
+  write_claude_split_stock > "$claude"
+  printf '%s\n' 'Installer-owned gentleman style.' > "$gentleman"
+  printf '%s\n' 'When launching `sdd-apply` or `sdd-verify`, search for testing capabilities' > "$home/.claude/skills/_shared/sdd-orchestrator-workflow.md"
+  write_init_skill_stock > "$home/.claude/skills/sdd-init/SKILL.md"
+  write_init_details_stock > "$home/.claude/skills/sdd-init/references/init-details.md"
+  write_pi_append_stock > "$pi"
+  write_pi_init_stock > "$pi_init"
+  {
+    printf '%s\n' '<!-- gentle-ai:persona -->'
+    cat "$ROOT/persona/persona-block.md"
+    printf '%s\n' '<!-- /gentle-ai:persona -->'
+  } > "$home/.config/opencode/AGENTS.md"
+  write_opencode_init_config "$config"
+  write_opencode_stock > "$home/.config/opencode/plugins/engram.ts"
+  write_init_skill_stock > "$opencode_skill"
+  write_init_details_stock > "$home/.config/opencode/skills/sdd-init/references/init-details.md"
+
+  output="$TMP_ROOT/fresh-224-check-before.txt"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check > "$output"
+  rc=$?
+  [ "$rc" -eq 2 ] || { cat "$output" >&2; fail "fresh 2.2.4 layout should be pending, got rc $rc"; exit 1; }
+  [ ! -e "$backups/.claude/output-styles/gentleman.md" ] || fail 'fresh 2.2.4 --check created a Claude backup' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
+  grep -Fq '# Neutral Output Style' "$gentleman" || fail 'fresh 2.2.4 Claude style was not transformed' || exit 1
+  grep -Fq 'allowed_answers: strict|rubric' "$pi_init" || fail 'fresh 2.2.4 Pi executable asset was not transformed' || exit 1
+  grep -Fq 'single writer of project TDD policy' "$opencode_skill" || fail 'fresh 2.2.4 OpenCode skill was not transformed' || exit 1
+  [ ! -e "$home/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'fresh 2.2.4 layout manufactured an OpenCode prompt file' || exit 1
+  jq -e '.agent["sdd-init"].prompt | contains("~/.config/opencode/skills/sdd-init/SKILL.md")' "$config" >/dev/null || fail 'fresh 2.2.4 OpenCode sdd-init prompt does not delegate to its skill' || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "fresh 2.2.4 layout should be clean after apply, got rc $rc" || exit 1
+
+  config_before="$TMP_ROOT/fresh-224-opencode-config-before.json"
+  cp -- "$config" "$config_before"
+  jq '.agent["sdd-init"].prompt = "Do not read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md."' "$config" > "$config_before.next"
+  mv -- "$config_before.next" "$config"
+  printf '%s\n' 'pending Claude style must survive failed preflight' > "$gentleman"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "refused OpenCode sdd-init prompt should block apply, got rc $rc" || exit 1
+  grep -Fqx 'pending Claude style must survive failed preflight' "$gentleman" || fail 'refused OpenCode prompt allowed a preflight write' || exit 1
+
+  cp -- "$config_before" "$config"
+  rm -f -- "$pi_init"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "missing Pi executable asset should block preflight, got rc $rc" || exit 1
+)
 
 expect_invalid_init_rubric_delta() {
   local fixture="$1"
@@ -603,7 +697,7 @@ test_init_rubric_shared_skill_idempotence_and_backup() (
 test_init_rubric_reference_and_pi_idempotence() (
   local home="$TMP_ROOT/init-reference-home" backups="$TMP_ROOT/init-reference-backups" reference pi
   reference="$home/.claude/skills/sdd-init/references/init-details.md"
-  pi="$home/.pi/agent/agents/sdd-init.md"
+  pi="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
   mkdir -p "$(dirname -- "$reference")" "$(dirname -- "$pi")"
   write_init_details_stock > "$reference"
   write_pi_init_stock > "$pi"
@@ -646,7 +740,7 @@ test_init_rubric_refuses_ambiguous_or_partial_shapes() (
   local home="$TMP_ROOT/init-refusal-home" backups="$TMP_ROOT/init-refusal-backups" skill details pi duplicate before
   skill="$home/.config/opencode/skills/sdd-init/SKILL.md"
   details="$home/.config/opencode/skills/sdd-init/references/init-details.md"
-  pi="$home/.pi/agent/agents/sdd-init.md"
+  pi="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
   duplicate="$home/.claude/skills/sdd-init/SKILL.md"
   mkdir -p "$(dirname -- "$skill")" "$(dirname -- "$details")" "$(dirname -- "$pi")" "$(dirname -- "$duplicate")"
 
@@ -670,7 +764,7 @@ test_init_rubric_refuses_ambiguous_or_partial_shapes() (
   expect_rc 3 init_rubric_apply "$pi" pi || exit 1
   expect_rc 3 init_rubric_apply "$duplicate" skill || exit 1
   cmp -s "$pi" "$before" || fail 'partial-marker Pi target changed' || exit 1
-  [ ! -e "$backups/.pi/agent/agents/sdd-init.md" ] || fail 'refused target was backed up' || exit 1
+  [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" ] || fail 'refused target was backed up' || exit 1
 )
 
 run() {
@@ -699,13 +793,14 @@ run test_target_drift_is_closed
 run test_installed_hosts_fallback_includes_gemini
 run test_sdd_init_host_rows_cover_cursor_and_copilot
 run test_antigravity_skill_root_resolution
-run test_opencode_sdd_init_prompt_lifecycle_and_reachability
+run test_opencode_sdd_init_inline_delegation_validation
 run test_init_rubric_source_shape_refusal
 run test_init_rubric_refuses_anchor_inside_managed_section
 run test_init_rubric_shared_skill_idempotence_and_backup
 run test_init_rubric_reference_and_pi_idempotence
 run test_init_rubric_replaces_complete_section
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
+run test_fresh_224_active_layout_lifecycle
 
 bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 bash "$ROOT/tests/rubric-compiler-core.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))

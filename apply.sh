@@ -23,7 +23,7 @@ OVERLAY_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PERSONA_FILE="$OVERLAY_DIR/persona/persona-block.md"
 PERSONA_RULES_FILE="$OVERLAY_DIR/persona/claude-split-rules.md"
 PERSONA_EXPERTISE_FILE="$OVERLAY_DIR/persona/claude-split-expertise.md"
-PERSONA_NEUTRAL_FILE="$OVERLAY_DIR/persona/neutral-style.md"
+PERSONA_STYLE_FILE="$OVERLAY_DIR/persona/neutral-style.md"
 RUBRIC_FILE="$OVERLAY_DIR/deltas/rubric-tdd.md"
 PIMODEL_FILE="$OVERLAY_DIR/deltas/pi-model-agnostic.md"
 OPENCODE_ENGRAM_FILE="$OVERLAY_DIR/deltas/opencode-engram-idempotent.md"
@@ -54,7 +54,7 @@ CHANGED=0
 #                        inside <!-- gentle-ai:persona -->, preserving the
 #                        installer-managed Contextual Skill Loading and Persona
 #                        Voice sections byte-exact.
-#   persona-split-neutral claude-code's externalized neutral.md (tone/behavior);
+#   persona-split-style claude-code's externalized gentleman.md (tone/behavior);
 #                        wholesale canonical replacement (no installer-managed
 #                        regions inside).
 #   rubric-list      markdown surface WITH the MANDATORY numbered list -> rubric is item 4
@@ -62,8 +62,8 @@ CHANGED=0
 #                    -> the loose-paragraph shape is the only one that fits
 #   rubric-json      opencode.json -> .agent["gentle-orchestrator"].prompt (carries the list)
 #   rubric-none      host has no strict-TDD forwarding section; nothing to inject
-#   sdd-init-prompt  OpenCode's hidden agent entrypoint, distinct from its
-#                    skill/manual support files
+#   sdd-init-delegation OpenCode's inline hidden-agent prompt must delegate to
+#                       the managed sdd-init skill
 #   pi-models        pi's sdd-model-assignments block -> host-agnostic `inherit`
 #                    (pi routes phases via ~/.pi/gentle-ai/models.json; the Claude
 #                     aliases gentle-ai renders there are unresolvable). pi ONLY.
@@ -71,20 +71,20 @@ CHANGED=0
 host_rows() {
   cat <<'ROWS'
 claude-code|persona-split-claude|.claude/CLAUDE.md
-claude-code|persona-split-neutral|.claude/output-styles/neutral.md
+claude-code|persona-split-style|.claude/output-styles/gentleman.md
 claude-code|rubric-prose|.claude/skills/_shared/sdd-orchestrator-workflow.md
 claude-code|sdd-init-skill|.claude/skills/sdd-init/SKILL.md
 claude-code|sdd-init-details|.claude/skills/sdd-init/references/init-details.md
 pi|persona-marked|.pi/agent/APPEND_SYSTEM.md
 pi|rubric-list|.pi/agent/APPEND_SYSTEM.md
 pi|pi-models|.pi/agent/APPEND_SYSTEM.md
-pi|sdd-init-pi|.pi/agent/agents/sdd-init.md
+pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md
 opencode|persona-marked|.config/opencode/AGENTS.md
 opencode|rubric-json|.config/opencode/opencode.json
 opencode|engram-idempotent|.config/opencode/plugins/engram.ts
 opencode|sdd-init-skill|.config/opencode/skills/sdd-init/SKILL.md
 opencode|sdd-init-details|.config/opencode/skills/sdd-init/references/init-details.md
-opencode|sdd-init-prompt|.config/opencode/prompts/sdd/sdd-init.md
+opencode|sdd-init-delegation|.config/opencode/opencode.json
 codex|persona-headed|.codex/AGENTS.md
 codex|rubric-none|.codex/AGENTS.md
 codex|sdd-init-skill|.codex/skills/sdd-init/SKILL.md
@@ -256,7 +256,7 @@ persona_apply() {
 # Persona split for claude-code: the new gentle-ai shape puts only
 # Rules/Expertise/Contextual Skill Loading/Persona Voice inside the
 # <!-- gentle-ai:persona --> block of CLAUDE.md, and externalizes
-# Personality/Tone/Behavior/Language to ~/.claude/output-styles/neutral.md.
+# Personality/Tone/Behavior/Language to ~/.claude/output-styles/gentleman.md.
 #
 # This function replaces ONLY the ## Rules and ## Expertise subregions inside
 # the marked persona block, preserving Contextual Skill Loading and Persona
@@ -329,20 +329,20 @@ persona_split_claude_apply() {
 }
 
 # ---------------------------------------------------------------------------
-# Persona split for claude-code's neutral.md: the externalized tone/behavior
+# Persona split for claude-code's gentleman.md: the externalized tone/behavior
 # file. Wholesale replacement with the canonical file (the entire file is
 # user-owned; there are no installer-managed regions inside it).
 # ---------------------------------------------------------------------------
-persona_split_neutral_apply() {
+persona_split_style_apply() {
   local file="$1" snapshot rc
   snapshot="$(target_tmp "$file")" || return 4
   if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
     rm -f -- "$snapshot"
     return 4
   fi
-  if diff -q "$snapshot" "$PERSONA_NEUTRAL_FILE" >/dev/null 2>&1; then rm -f -- "$snapshot"; return 1; fi
+  if diff -q "$snapshot" "$PERSONA_STYLE_FILE" >/dev/null 2>&1; then rm -f -- "$snapshot"; return 1; fi
   if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$snapshot"; return 0; fi
-  commit_replacement "$file" "$snapshot" "$PERSONA_NEUTRAL_FILE"; rc=$?
+  commit_replacement "$file" "$snapshot" "$PERSONA_STYLE_FILE"; rc=$?
   rm -f -- "$snapshot"
   return "$rc"
 }
@@ -370,7 +370,7 @@ persona_split_neutral_apply() {
 [ -r "$PERSONA_FILE" ]  || { echo "FATAL: missing $PERSONA_FILE" >&2; exit 1; }
 [ -r "$PERSONA_RULES_FILE" ]     || { echo "FATAL: missing $PERSONA_RULES_FILE" >&2; exit 1; }
 [ -r "$PERSONA_EXPERTISE_FILE" ]|| { echo "FATAL: missing $PERSONA_EXPERTISE_FILE" >&2; exit 1; }
-[ -r "$PERSONA_NEUTRAL_FILE" ]  || { echo "FATAL: missing $PERSONA_NEUTRAL_FILE" >&2; exit 1; }
+[ -r "$PERSONA_STYLE_FILE" ]  || { echo "FATAL: missing $PERSONA_STYLE_FILE" >&2; exit 1; }
 [ -r "$RUBRIC_FILE" ]   || { echo "FATAL: missing $RUBRIC_FILE" >&2; exit 1; }
 [ -r "$PIMODEL_FILE" ]  || { echo "FATAL: missing $PIMODEL_FILE" >&2; exit 1; }
 [ -r "$OPENCODE_ENGRAM_FILE" ] || { echo "FATAL: missing $OPENCODE_ENGRAM_FILE" >&2; exit 1; }
@@ -443,9 +443,10 @@ rubric_transform_list() {
 
       for (i = 1; i <= n; i++) {
         if (replace4) {
-          # A list item ends at the next non-indented nonblank line.
-          if (line[i] ~ /^[^ \t]/) replace4 = 0
-          else continue
+          # A list item ends at its first non-indented line. Preserve the
+          # separator blank after item 4; it belongs to the following section.
+          if (line[i] ~ /^[ \t]+/) continue
+          replace4 = 0
         }
         if (drop[i]) continue
         if (i == item4_at) {
@@ -753,6 +754,14 @@ opencode_engram_apply() {
   return "$rc"
 }
 
+# OpenCode 2.2.4 embeds the hidden sdd-init agent prompt directly in strict JSON.
+# The managed skill is executable only when the terminal imperative delegates to it.
+opencode_sdd_init_delegates() {
+  local file="$1"
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -e '.agent["sdd-init"] | (.hidden == true and (.prompt | strings | test("(^|[.!?][[:space:]]+)Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL\\.md and follow it exactly\\.[[:space:]]*$")))' "$file" >/dev/null 2>&1
+}
+
 # rc 0 = written/pending, 1 = already applied, 3 = anchor gone,
 # 4 = operational failure, 5 = target drift.
 rubric_apply_md() {
@@ -872,16 +881,16 @@ while IFS= read -r host; do
           *) report "WRITE-FAILED" "persona" "$short (split: Rules+Expertise)"; OPERATION_FAILED=1 ;;
         esac
         ;;
-      persona-split-neutral)
-        persona_split_neutral_apply "$file"; rc=$?
+      persona-split-style)
+        persona_split_style_apply "$file"; rc=$?
         case "$rc" in
-          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "persona" "$short (split: neutral)"; PENDING=1
-              else report "applied" "persona" "$short (split: neutral)"; CHANGED=1; fi ;;
-          1) report "already-applied" "persona" "$short (split: neutral)" ;;
-          3) report "ANCHOR-NOT-FOUND" "persona" "$short (split: neutral)"; MISSING_ANCHOR=1 ;;
-          4) report "WRITE-FAILED" "persona" "$short (split: neutral)"; OPERATION_FAILED=1 ;;
-          5) report "TARGET-DRIFT" "persona" "$short (split: neutral)"; TARGET_DRIFT=1 ;;
-          *) report "WRITE-FAILED" "persona" "$short (split: neutral)"; OPERATION_FAILED=1 ;;
+          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "persona" "$short (split: gentleman)"; PENDING=1
+              else report "applied" "persona" "$short (split: gentleman)"; CHANGED=1; fi ;;
+          1) report "already-applied" "persona" "$short (split: gentleman)" ;;
+          3) report "ANCHOR-NOT-FOUND" "persona" "$short (split: gentleman)"; MISSING_ANCHOR=1 ;;
+          4) report "WRITE-FAILED" "persona" "$short (split: gentleman)"; OPERATION_FAILED=1 ;;
+          5) report "TARGET-DRIFT" "persona" "$short (split: gentleman)"; TARGET_DRIFT=1 ;;
+          *) report "WRITE-FAILED" "persona" "$short (split: gentleman)"; OPERATION_FAILED=1 ;;
         esac
         ;;
       persona-marked|persona-headed)
@@ -932,12 +941,11 @@ while IFS= read -r host; do
           *) report "WRITE-FAILED" "engram" "$short (idempotent injection)"; OPERATION_FAILED=1 ;;
         esac
         ;;
-      sdd-init-skill|sdd-init-details|sdd-init-pi|sdd-init-prompt)
+      sdd-init-skill|sdd-init-details|sdd-init-pi)
         case "$surface" in
           sdd-init-skill) shape=skill ;;
           sdd-init-details) shape=details ;;
           sdd-init-pi) shape=pi ;;
-          sdd-init-prompt) shape=skill ;;
         esac
         init_rubric_apply "$file" "$shape"; rc=$?
         case "$rc" in
@@ -949,6 +957,14 @@ while IFS= read -r host; do
           5) report "TARGET-DRIFT" "sdd-init-rubric" "$short"; TARGET_DRIFT=1 ;;
           *) report "WRITE-FAILED" "sdd-init-rubric" "$short"; OPERATION_FAILED=1 ;;
         esac
+        ;;
+      sdd-init-delegation)
+        if opencode_sdd_init_delegates "$file"; then
+          report "reachable" "sdd-init-rubric" "$short (inline prompt -> managed skill)"
+        else
+          report "UNREACHABLE" "sdd-init-rubric" "$short (inline prompt must delegate to managed skill)"
+          MISSING_ANCHOR=1
+        fi
         ;;
       rubric-none)
         # This host's template has no strict-TDD forwarding section at all.
