@@ -8,7 +8,8 @@ This is an unofficial, community-maintained project. It is not affiliated with,
 endorsed by, or supported by Gentleman Programming. Gentle AI and its original
 prompt assets are licensed separately; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
-Validated with Gentle AI `2.2.2` on Linux and macOS.
+Active-surface compatibility was reverified with Gentle AI `2.2.4` on Linux;
+prior `2.2.2` validation covered Linux and macOS.
 
 ## Install
 
@@ -161,9 +162,10 @@ loading `apply.sh`; `tests/run.sh` covers the cross-host transform behavior.
 The contract requires project-derived signatures, a `strict_tdd`-derived default
 row, strictest-wins matching with unioned obligations, equivalent mode-specific
 persistence, and confirmation-gated re-init drift maintenance. `apply.sh`
-installs it before the exact 2.2.0 anchors `## Decision Gates`, `## Output
-Templates`, and Pi's `## Memory Contract`; incomplete or ambiguous managed
-markers/anchors fail closed.
+installs it before the exact SDD-init anchors `## Decision Gates`, `## Output
+Templates`, and Pi's `## Memory Contract`, which were reverified unchanged on
+active Gentle AI 2.2.4 surfaces; incomplete or ambiguous managed markers and
+anchors fail closed.
 
 For OpenCode, the installed `SKILL.md` and `references/` files remain support and
 manual surfaces. The hidden `sdd-init` agent executes the prompt referenced by
