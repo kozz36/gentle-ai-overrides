@@ -150,9 +150,16 @@ test_pi_workflow_consumer_contract() (
     grep -Fq "$invariant" "$consumer" || fail "Pi workflow consumer lacks invariant: $invariant" || exit 1
   done
   grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' "$apply" || fail 'Pi workflow host row is not resolver-backed' || exit 1
+  grep -Fqx 'pi|sdd-init-pi|@pi-gentle-pi-sdd-init@' "$apply" || fail 'Pi sdd-init host row is not resolver-backed' || exit 1
   if grep -Fqx 'pi|pi-rubric-workflow|.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md' "$apply"; then
     fail 'Pi workflow host row retains the retired static npm-only path' || exit 1
   fi
+  if grep -Fqx 'pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md' "$apply"; then
+    fail 'Pi sdd-init host row retains the retired static npm-only path' || exit 1
+  fi
+  grep -Fq 'resolve_pi_gentle_package_root_rel()' "$apply" || fail 'Pi shared package-root resolver is missing' || exit 1
+  grep -Fq "resolve_pi_gentle_asset_rel 'assets/sdd-orchestrator-workflow.md'" "$apply" || fail 'Pi workflow does not use the shared package resolver' || exit 1
+  grep -Fq "resolve_pi_gentle_asset_rel 'assets/agents/sdd-init.md'" "$apply" || fail 'Pi sdd-init does not use the shared package resolver' || exit 1
   grep -Fq "PI_WORKFLOW_BINARY='For \`sdd-apply\` and \`sdd-verify\`, read \`openspec/config.yaml\` when present." "$apply" || fail 'Pi workflow binary anchor is missing' || exit 1
   grep -Fq 'pi_rubric_workflow_transform()' "$apply" || fail 'Pi workflow transform is missing' || exit 1
   grep -Fq 'opens != closes || opens > 1 || (opens == 1 && open_line >= close_line)' "$apply" || fail 'Pi workflow marker cardinality guard is missing' || exit 1

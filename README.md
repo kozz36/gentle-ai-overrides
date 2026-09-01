@@ -27,9 +27,9 @@ Run the overlay after every `gentle-ai sync`, `gentle-ai upgrade`, or
 `gentle-ai install`. Gentle AI regenerates host configuration from embedded
 templates during those operations, replacing manual edits. After any
 `gentle-pi` package update, run `./apply.sh --check` and reapply: the Pi rubric
-overlay targets a package asset that package installation replaces. Pi may
-install that package from git or npm; the overlay resolves the configured source
-rather than assuming one layout.
+and SDD-init overlays target package assets that package installation replaces.
+Pi may install that package from git or npm; the overlay resolves one configured
+package root for both assets rather than assuming one layout.
 
 ## Usage
 
@@ -210,15 +210,13 @@ write it. The ownership split is:
 - **CodeGraph guidance:** the installer/community-tool owns it; leaving APPEND entirely
   untouched preserves it.
 
-The Pi mappings retained by this overlay are:
+The Pi mappings retained by this overlay are the settings-selected gentle-pi
+package assets: its `assets/agents/sdd-init.md`, which receives the
+marker-delimited SDD-init rubric producer contract described above, and its
+package-owned lazy workflow, where the overlay inserts the
+`gentle-ai:pi-rubric-forwarding` block after the binary Strict TDD contract.
 
-- `~/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md`, the active
-  gentle-pi `sdd-init` asset, which receives the marker-delimited SDD-init rubric
-  producer contract described above; and
-- gentle-pi's package-owned lazy workflow, where the overlay inserts its
-  `gentle-ai:pi-rubric-forwarding` block after the workflow's binary Strict TDD contract.
-
-The workflow target is resolved from the single recognized gentle-pi source in
+Both asset targets are resolved from one recognized gentle-pi package root in
 `~/.pi/agent/settings.json` (`packages` entries may be strings or objects with a
 `source` field):
 
@@ -227,9 +225,9 @@ The workflow target is resolved from the single recognized gentle-pi source in
   `git:https://github.com/Gentleman-Programming/gentle-pi.git#<ref>`, or SSH
   `git:ssh://git@github.com/Gentleman-Programming/gentle-pi.git#<ref>` /
   `git:git@github.com:Gentleman-Programming/gentle-pi.git#<ref>` — →
-  `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md`
+  `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/{agents/sdd-init.md,sdd-orchestrator-workflow.md}`
 - exact npm package `npm:gentle-pi@<version>` (or unprefixed `gentle-pi`) →
-  `~/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md`
+  `~/.pi/agent/npm/node_modules/gentle-pi/assets/{agents/sdd-init.md,sdd-orchestrator-workflow.md}`
 
 Every configured source whose exact package, repository, or local-path basename is
 `gentle-pi` is classified. Any noncanonical GitHub, local/path, or otherwise unsupported
@@ -242,9 +240,9 @@ parser is available, or settings is invalid JSON, it fails closed with
 Only an absent settings file, or successfully parsed settings without a `gentle-pi` source,
 permits unique-root fallback. If both layouts exist without one unambiguous configured source
 or sources conflict, it reports `PACKAGE-TARGET-CONFIG-FAILURE` and writes nothing. A configured
-source always wins over a stale alternate layout; if its selected workflow is missing or unsafe,
+source always wins over a stale alternate layout; if either selected asset is missing or unsafe,
 the overlay reports that target instead of falling back. Neither mapping reads or modifies
-`APPEND_SYSTEM.md`. The package workflow is replaced by `gentle-pi`/package updates, so
+`APPEND_SYSTEM.md`. The package assets are replaced by `gentle-pi`/package updates, so
 run `./apply.sh --check` and reapply after each one.
 
 ### 6. OpenCode Engram injection — idempotent fallback
@@ -262,8 +260,8 @@ dynamic save nudge and the rest of the plugin remain installer-managed.
 | --- | --- | --- | --- |
 | `claude-code` | `~/.claude/CLAUDE.md`, selected `~/.claude/output-styles/{neutral,gentleman}.md` | split shape — Rules + Expertise are heading-bounded; the selected native style is replaced wholesale | — |
 | `claude-code` | `~/.claude/skills/_shared/sdd-orchestrator-workflow.md` | — | **prose** — this surface has no numbered list |
-| `pi` | `~/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md` | executable `sdd-init` asset | —; the SDD-init rubric producer contract is marker-delimited |
-| `pi` | settings-selected gentle-pi workflow: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md` | — | marker-delimited project-rubric forwarding after the binary Strict TDD contract; ambiguous package roots fail closed |
+| `pi` | settings-selected gentle-pi `sdd-init`: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/agents/sdd-init.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md` | executable `sdd-init` asset | —; the SDD-init rubric producer contract is marker-delimited |
+| `pi` | settings-selected gentle-pi workflow: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md` | — | marker-delimited project-rubric forwarding after the binary Strict TDD contract; both Pi assets use the same selected package root and ambiguous roots fail closed |
 | `opencode` | `~/.config/opencode/AGENTS.md` | marker block | — |
 | `opencode` | `~/.config/opencode/opencode.json` | — | item 4, via `jq` into `.agent["gentle-orchestrator"].prompt` |
 | `opencode` | `~/.config/opencode/skills/sdd-init/SKILL.md`, `~/.config/opencode/skills/sdd-init/references/init-details.md` | managed `sdd-init` skill and reference; the skill is transformed before `## Decision Gates` | — |

@@ -74,7 +74,7 @@ claude-code|persona-split-style|@claude-output-style@
 claude-code|rubric-prose|.claude/skills/_shared/sdd-orchestrator-workflow.md
 claude-code|sdd-init-skill|.claude/skills/sdd-init/SKILL.md
 claude-code|sdd-init-details|.claude/skills/sdd-init/references/init-details.md
-pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md
+pi|sdd-init-pi|@pi-gentle-pi-sdd-init@
 pi|pi-rubric-workflow|@pi-gentle-pi-workflow@
 opencode|persona-marked|.config/opencode/AGENTS.md
 opencode|rubric-json|.config/opencode/opencode.json
@@ -217,13 +217,14 @@ EOF
   printf '%s\n' "$selected"
 }
 
-# Resolve Pi's package-owned workflow without assuming an npm install layout.
-# A safely inspected single explicit settings source wins even when an older layout
-# is still present. Root fallback is allowed only when settings is absent or safely
-# parsed without a gentle-pi source; two roots are deliberately ambiguous.
-resolve_pi_gentle_workflow_rel() {
-  local git_rel='.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md'
-  local npm_rel='.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md'
+# Resolve the selected gentle-pi package root without assuming an npm install
+# layout. Every package-owned asset is resolved beneath this one root, so a safely
+# inspected explicit source wins over a stale alternate layout for the whole Pi
+# overlay. Root fallback is allowed only when settings is absent or safely parsed
+# without a gentle-pi source; two roots are deliberately ambiguous.
+resolve_pi_gentle_package_root_rel() {
+  local git_root='.pi/agent/git/github.com/Gentleman-Programming/gentle-pi'
+  local npm_root='.pi/agent/npm/node_modules/gentle-pi'
   local configured configured_rc git_present=0 npm_present=0
 
   configured="$(pi_configured_package_kind)"
@@ -231,8 +232,8 @@ resolve_pi_gentle_workflow_rel() {
   case "$configured_rc" in
     0)
       case "$configured" in
-        git) printf '%s\n' "$git_rel" ;;
-        npm) printf '%s\n' "$npm_rel" ;;
+        git) printf '%s\n' "$git_root" ;;
+        npm) printf '%s\n' "$npm_root" ;;
         *) return 1 ;;
       esac
       return 0
@@ -240,13 +241,30 @@ resolve_pi_gentle_workflow_rel() {
     2) return 1 ;;
   esac
 
-  [ -d "$HOME/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi" ] && git_present=1
-  [ -d "$HOME/.pi/agent/npm/node_modules/gentle-pi" ] && npm_present=1
+  [ -d "$HOME/$git_root" ] && git_present=1
+  [ -d "$HOME/$npm_root" ] && npm_present=1
   case "$git_present:$npm_present" in
-    1:0) printf '%s\n' "$git_rel" ;;
-    0:1) printf '%s\n' "$npm_rel" ;;
+    1:0) printf '%s\n' "$git_root" ;;
+    0:1) printf '%s\n' "$npm_root" ;;
     *) return 1 ;;
   esac
+}
+
+# Resolve a Pi package-owned asset under the one selected package root. The caller
+# supplies only a fixed package-relative asset path; no target may independently
+# fall back to another package layout.
+resolve_pi_gentle_asset_rel() {
+  local asset_rel="$1" root
+  root="$(resolve_pi_gentle_package_root_rel)" || return 1
+  printf '%s/%s\n' "$root" "$asset_rel"
+}
+
+resolve_pi_gentle_workflow_rel() {
+  resolve_pi_gentle_asset_rel 'assets/sdd-orchestrator-workflow.md'
+}
+
+resolve_pi_gentle_sdd_init_rel() {
+  resolve_pi_gentle_asset_rel 'assets/agents/sdd-init.md'
 }
 
 # v2.2.0 installs Antigravity skills below the desktop root when it exists;
@@ -260,6 +278,9 @@ resolve_target_rel() {
       ;;
     pi:@pi-gentle-pi-workflow@)
       resolve_pi_gentle_workflow_rel
+      ;;
+    pi:@pi-gentle-pi-sdd-init@)
+      resolve_pi_gentle_sdd_init_rel
       ;;
     antigravity:@antigravity-skills@/*)
       suffix="${rel#@antigravity-skills@/}"
@@ -1038,7 +1059,7 @@ while IFS= read -r host; do
     unresolved_rel="$rel"
     if ! rel="$(resolve_target_rel "$host" "$rel")" || [ -z "$rel" ]; then
       case "$host:$unresolved_rel" in
-        pi:@pi-gentle-pi-workflow@)
+        pi:@pi-gentle-pi-workflow@|pi:@pi-gentle-pi-sdd-init@)
           report "PACKAGE-TARGET-CONFIG-FAILURE" "$surface" "$unresolved_rel (ambiguous, conflicting, or unsupported gentle-pi package source)"
           PACKAGE_TARGET_FAILED=1
           break 2
