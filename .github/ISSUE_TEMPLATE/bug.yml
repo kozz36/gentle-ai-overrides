@@ -1,0 +1,69 @@
+name: Overlay compatibility report
+description: Report a Gentle AI, overlay, or agent-host compatibility issue
+title: "[Compatibility]: "
+labels:
+  - bug
+  - "status:needs-review"
+body:
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Which area is primarily affected?
+      options:
+        - Gentle AI compatibility
+        - Overlay behavior
+        - Agent host integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: Problem / current behavior
+      description: Describe the observed problem and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: Describe what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected-versions
+    attributes:
+      label: Affected Gentle AI, overlay, and host versions
+      description: List the relevant Gentle AI, overlay, and agent-host versions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-evidence
+    attributes:
+      label: Reproduction steps and evidence
+      description: Provide reproducible steps and relevant sanitized output or other evidence.
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: Proposed or desired outcome
+      description: Describe the outcome or change that would resolve this report.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I completed a search of open and closed issues for duplicates.
+          required: true
+        - label: I removed all sensitive data from this report and its evidence.
+          required: true
