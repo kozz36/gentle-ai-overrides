@@ -25,7 +25,6 @@ PERSONA_RULES_FILE="$OVERLAY_DIR/persona/claude-split-rules.md"
 PERSONA_EXPERTISE_FILE="$OVERLAY_DIR/persona/claude-split-expertise.md"
 PERSONA_STYLE_FILE="$OVERLAY_DIR/persona/neutral-style.md"
 RUBRIC_FILE="$OVERLAY_DIR/deltas/rubric-tdd.md"
-PIMODEL_FILE="$OVERLAY_DIR/deltas/pi-model-agnostic.md"
 OPENCODE_ENGRAM_FILE="$OVERLAY_DIR/deltas/opencode-engram-idempotent.md"
 INIT_RUBRIC_FILE="${INIT_RUBRIC_FILE:-$OVERLAY_DIR/deltas/sdd-init-rubric.md}"
 STATE_JSON="$HOME/.gentle-ai/state.json"
@@ -40,6 +39,7 @@ CHECK_ONLY=0
 MISSING_ANCHOR=0
 OPERATION_FAILED=0
 TARGET_DRIFT=0
+PACKAGE_TARGET_FAILED=0
 PENDING=0
 CHANGED=0
 
@@ -61,12 +61,11 @@ CHANGED=0
 #   rubric-prose     markdown surface WITHOUT the list (claude-code's condensed workflow)
 #                    -> the loose-paragraph shape is the only one that fits
 #   rubric-json      opencode.json -> .agent["gentle-orchestrator"].prompt (carries the list)
+#   pi-rubric-workflow Pi's package-owned lazy SDD workflow asset; marker-delimited
+#                      project-rubric forwarding after its binary contract
 #   rubric-none      host has no strict-TDD forwarding section; nothing to inject
 #   sdd-init-delegation OpenCode's hidden agent uses either the native inline
 #                       imperative or the exact native external prompt reference
-#   pi-models        pi's sdd-model-assignments block -> host-agnostic `inherit`
-#                    (pi routes phases via ~/.pi/gentle-ai/models.json; the Claude
-#                     aliases gentle-ai renders there are unresolvable). pi ONLY.
 # ---------------------------------------------------------------------------
 host_rows() {
   cat <<'ROWS'
@@ -75,10 +74,8 @@ claude-code|persona-split-style|@claude-output-style@
 claude-code|rubric-prose|.claude/skills/_shared/sdd-orchestrator-workflow.md
 claude-code|sdd-init-skill|.claude/skills/sdd-init/SKILL.md
 claude-code|sdd-init-details|.claude/skills/sdd-init/references/init-details.md
-pi|persona-marked|.pi/agent/APPEND_SYSTEM.md
-pi|rubric-list|.pi/agent/APPEND_SYSTEM.md
-pi|pi-models|.pi/agent/APPEND_SYSTEM.md
 pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md
+pi|pi-rubric-workflow|@pi-gentle-pi-workflow@
 opencode|persona-marked|.config/opencode/AGENTS.md
 opencode|rubric-json|.config/opencode/opencode.json
 opencode|engram-idempotent|.config/opencode/plugins/engram.ts
@@ -121,6 +118,137 @@ installed_hosts() {
   printf '%s\n' claude-code opencode pi codex cursor vscode-copilot gemini-cli antigravity
 }
 
+# Emit one JSON-string record per Pi package source without evaluating settings
+# content. jq is preferred; Node is the safe JSON-parser fallback available with
+# Pi. @json / JSON.stringify keep each arbitrary decoded string on one physical
+# line, so a control character can never create a second classifier record.
+pi_package_source_strings() {
+  local settings="$1"
+
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '
+      .packages[]? |
+      if type == "string" then .
+      elif type == "object" and (.source? | type == "string") then .source
+      else empty end |
+      @json
+    ' "$settings" 2>/dev/null
+  elif command -v node >/dev/null 2>&1; then
+    node -e '
+      const fs = require("fs");
+      const settings = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const packages = settings && Array.isArray(settings.packages) ? settings.packages : [];
+      for (const entry of packages) {
+        const source = typeof entry === "string"
+          ? entry
+          : entry !== null && typeof entry === "object" && !Array.isArray(entry) &&
+              typeof entry.source === "string"
+            ? entry.source
+            : null;
+        if (source !== null) process.stdout.write(JSON.stringify(source) + "\n");
+      }
+    ' "$settings"
+  else
+    return 127
+  fi
+}
+
+# Classify one complete JSON-string record emitted by pi_package_source_strings.
+# Canonical supported identities contain no JSON escapes, so matching their complete
+# framed representation is safer than decoding data into shell strings. Invalid
+# frames fail closed, while unrelated names such as gentle-pi-helper remain ignored.
+pi_classify_package_source_record() {
+  local record="$1"
+  local json_string_re='^"([^"\\[:cntrl:]]|\\(["\\/bfnrt]|u[[:xdigit:]]{4}))*"$'
+  local git_source_re='^"git:(github\.com/Gentleman-Programming/gentle-pi|https://github\.com/Gentleman-Programming/gentle-pi(\.git)?|ssh://git@github\.com/Gentleman-Programming/gentle-pi(\.git)?|git@github\.com:Gentleman-Programming/gentle-pi(\.git)?)([@#][^[:space:]"\\]+)?"$'
+  local npm_source_re='^"(npm:)?gentle-pi(@[A-Za-z0-9~^<>=*][A-Za-z0-9._~^<>=|*+-]*)?"$'
+  local gentle_pi_identity_re='gentle-pi(\.git)?([^[:alnum:]_.-]|$)'
+
+  # A parser must only emit a complete JSON string. This also catches accidental
+  # raw-newline framing before root fallback can inspect a stale package layout.
+  [[ "$record" =~ $json_string_re ]] || return 2
+
+  if [[ "$record" =~ $git_source_re ]]; then
+    printf '%s\n' git
+    return 0
+  fi
+  if [[ "$record" =~ $npm_source_re ]]; then
+    printf '%s\n' npm
+    return 0
+  fi
+
+  # An unsupported exact gentle-pi basename (including one with escaped control
+  # data or a concatenated suffix) is configuration we must not bypass. Names with
+  # a continued identifier character, e.g. gentle-pi-helper, are unrelated.
+  [[ "$record" =~ $gentle_pi_identity_re ]] && return 2
+  return 1
+}
+
+# Return one recognized gentle-pi package source kind from Pi's package settings.
+# The package sources are data only: both safe parsers emit framed JSON records and
+# this one shared exact-identity classifier maps supported forms. Return 1 when no
+# gentle-pi source is configured and 2 for unavailable parsing, invalid, unsupported,
+# malformed-framing, or conflicting configuration.
+pi_configured_package_kind() {
+  local settings="$HOME/.pi/agent/settings.json" sources record kind selected='' known=0 rc
+
+  [ -e "$settings" ] || return 1
+  [ -f "$settings" ] && [ -r "$settings" ] || return 2
+
+  sources="$(pi_package_source_strings "$settings")" || return 2
+  [ -n "$sources" ] || return 1
+
+  while IFS= read -r record; do
+    kind="$(pi_classify_package_source_record "$record")"
+    rc=$?
+    case "$rc" in
+      0)
+        known=$((known + 1))
+        selected="$kind"
+        ;;
+      1) ;;
+      *) return 2 ;;
+    esac
+  done <<EOF
+$sources
+EOF
+
+  [ "$known" -eq 1 ] || { [ "$known" -eq 0 ] && return 1; return 2; }
+  printf '%s\n' "$selected"
+}
+
+# Resolve Pi's package-owned workflow without assuming an npm install layout.
+# A safely inspected single explicit settings source wins even when an older layout
+# is still present. Root fallback is allowed only when settings is absent or safely
+# parsed without a gentle-pi source; two roots are deliberately ambiguous.
+resolve_pi_gentle_workflow_rel() {
+  local git_rel='.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md'
+  local npm_rel='.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md'
+  local configured configured_rc git_present=0 npm_present=0
+
+  configured="$(pi_configured_package_kind)"
+  configured_rc=$?
+  case "$configured_rc" in
+    0)
+      case "$configured" in
+        git) printf '%s\n' "$git_rel" ;;
+        npm) printf '%s\n' "$npm_rel" ;;
+        *) return 1 ;;
+      esac
+      return 0
+      ;;
+    2) return 1 ;;
+  esac
+
+  [ -d "$HOME/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi" ] && git_present=1
+  [ -d "$HOME/.pi/agent/npm/node_modules/gentle-pi" ] && npm_present=1
+  case "$git_present:$npm_present" in
+    1:0) printf '%s\n' "$git_rel" ;;
+    0:1) printf '%s\n' "$npm_rel" ;;
+    *) return 1 ;;
+  esac
+}
+
 # v2.2.0 installs Antigravity skills below the desktop root when it exists;
 # otherwise the CLI root is authoritative. The resolved path remains subject to
 # the same regular-file and missing-file checks as every other target.
@@ -129,6 +257,9 @@ resolve_target_rel() {
   case "$host:$rel" in
     claude-code:@claude-output-style@)
       resolve_claude_output_style_rel
+      ;;
+    pi:@pi-gentle-pi-workflow@)
+      resolve_pi_gentle_workflow_rel
       ;;
     antigravity:@antigravity-skills@/*)
       suffix="${rel#@antigravity-skills@/}"
@@ -430,7 +561,6 @@ persona_split_style_apply() {
 [ -r "$PERSONA_EXPERTISE_FILE" ]|| { echo "FATAL: missing $PERSONA_EXPERTISE_FILE" >&2; exit 1; }
 [ -r "$PERSONA_STYLE_FILE" ]  || { echo "FATAL: missing $PERSONA_STYLE_FILE" >&2; exit 1; }
 [ -r "$RUBRIC_FILE" ]   || { echo "FATAL: missing $RUBRIC_FILE" >&2; exit 1; }
-[ -r "$PIMODEL_FILE" ]  || { echo "FATAL: missing $PIMODEL_FILE" >&2; exit 1; }
 [ -r "$OPENCODE_ENGRAM_FILE" ] || { echo "FATAL: missing $OPENCODE_ENGRAM_FILE" >&2; exit 1; }
 [ -r "$INIT_RUBRIC_FILE" ] || { echo "FATAL: missing $INIT_RUBRIC_FILE" >&2; exit 1; }
 
@@ -448,8 +578,9 @@ extract_shape() { extract_shape_from "$RUBRIC_FILE" "$1"; }
 RUBRIC_ITEM4="$(extract_shape list-item)"
 RUBRIC_PROSE="$(extract_shape prose)"
 CACHE_NEW="$(extract_shape cache-sentence)"
+RUBRIC_PI_WORKFLOW="$(extract_shape pi-workflow)"
 
-[ -n "$RUBRIC_ITEM4" ] && [ -n "$RUBRIC_PROSE" ] && [ -n "$CACHE_NEW" ] || {
+[ -n "$RUBRIC_ITEM4" ] && [ -n "$RUBRIC_PROSE" ] && [ -n "$CACHE_NEW" ] && [ -n "$RUBRIC_PI_WORKFLOW" ] || {
   echo "FATAL: $RUBRIC_FILE is missing one of the shape blocks" >&2; exit 1; }
 
 # First line of item 4 -- the marker used to locate the numbered-list block.
@@ -462,6 +593,23 @@ ANCHOR_ITEM3='3. If the search fails or `strict_tdd` is not found, do NOT add th
 
 # Anchor: claude-code's condensed prose form, which has no numbered list.
 ANCHOR_PROSE='When launching `sdd-apply` or `sdd-verify`, search for testing capabilities'
+
+# Exact gentle-pi 2.2.0 lazy workflow structure. The binary forwarding contract is
+# deliberately not rewritten; the Pi-only marker block is inserted immediately
+# after it and before the following archive section.
+PI_WORKFLOW_HEADING='## Strict TDD Forwarding'
+PI_WORKFLOW_ARCHIVE='## Archive Final-State Handoff'
+PI_WORKFLOW_MARK_OPEN='<!-- gentle-ai:pi-rubric-forwarding -->'
+PI_WORKFLOW_MARK_CLOSE='<!-- /gentle-ai:pi-rubric-forwarding -->'
+PI_WORKFLOW_BINARY='For `sdd-apply` and `sdd-verify`, read `openspec/config.yaml` when present.
+
+If it declares strict TDD and a test command, include a non-negotiable instruction in the phase prompt:
+
+```text
+STRICT TDD MODE IS ACTIVE. Test runner: <command>. Follow RED, GREEN, TRIANGULATE, REFACTOR. Record evidence.
+```
+
+Do not rely on the child agent to discover this independently.'
 
 # The weaker caching sentence some hosts carry. Upgraded in place where present,
 # so the rubric is explicitly part of what gets cached. Never invented where absent.
@@ -542,22 +690,60 @@ rubric_transform_prose() {
   '
 }
 
+# Pi's lazy workflow carries its own exact binary Strict TDD contract. Preserve
+# that contract byte-for-byte and manage only this overlay-owned block after it.
+# The structure is fail-closed: each anchor must be unique and ordered, and a
+# marker pair must be absent or exactly one complete pair in the allowed gap.
+pi_rubric_workflow_transform() {
+  BLOCK="$RUBRIC_PI_WORKFLOW" HEADING="$PI_WORKFLOW_HEADING" ARCHIVE="$PI_WORKFLOW_ARCHIVE" \
+  BINARY="$PI_WORKFLOW_BINARY" OPEN_MARKER="$PI_WORKFLOW_MARK_OPEN" CLOSE_MARKER="$PI_WORKFLOW_MARK_CLOSE" \
+    awk '
+      BEGIN {
+        block = ENVIRON["BLOCK"]; heading = ENVIRON["HEADING"]; archive = ENVIRON["ARCHIVE"]
+        binary = ENVIRON["BINARY"]; open_marker = ENVIRON["OPEN_MARKER"]; close_marker = ENVIRON["CLOSE_MARKER"]
+        binary_lines = split(binary, binary_line, "\n")
+      }
+      { line[NR] = $0 }
+      END {
+        n = NR
+        for (i = 1; i <= n; i++) {
+          if (line[i] == heading) { headings++; heading_line = i }
+          if (line[i] == archive) { archives++; archive_line = i }
+          if (line[i] == open_marker) { opens++; open_line = i }
+          if (line[i] == close_marker) { closes++; close_line = i }
+          if (index(line[i], "gentle-ai:pi-rubric-forwarding") && line[i] != open_marker && line[i] != close_marker) malformed_marker = 1
+        }
+        for (i = 1; i <= n - binary_lines + 1; i++) {
+          matches = 1
+          for (j = 1; j <= binary_lines; j++) if (line[i + j - 1] != binary_line[j]) matches = 0
+          if (matches) { binaries++; binary_start = i; binary_end = i + binary_lines - 1 }
+        }
+        if (headings != 1 || archives != 1 || binaries != 1 || malformed_marker || \
+            heading_line >= binary_start || binary_end >= archive_line) exit 1
+        if (opens != closes || opens > 1 || (opens == 1 && open_line >= close_line)) exit 1
+        if (opens == 1 && (open_line <= binary_end || close_line >= archive_line || \
+                           (heading_line >= open_line && heading_line <= close_line) || \
+                           (binary_start >= open_line && binary_start <= close_line) || \
+                           (archive_line >= open_line && archive_line <= close_line))) exit 1
+        for (i = binary_end + 1; i < archive_line; i++) {
+          if (opens == 1 && i >= open_line && i <= close_line) continue
+          if (line[i] !~ /^[ \t]*$/) exit 1
+        }
+
+        for (i = 1; i <= n; i++) {
+          if (i <= binary_end) { print line[i]; continue }
+          if (i > binary_end && i < archive_line) continue
+          if (i == archive_line) { print ""; print block; print ""; print line[i]; continue }
+          print line[i]
+        }
+        exit 0
+      }
+    '
+}
+
 # ---------------------------------------------------------------------------
-# pi model-agnostic assignments.
-#
-# gentle-ai renders the SDD model-assignments table with CLAUDE aliases (opus /
-# sonnet / haiku) into every host, including pi. pi cannot resolve those aliases:
-# its phase routing lives in ~/.pi/gentle-ai/models.json, which maps every phase
-# to a concrete provider model. The rendered table therefore tells pi's
-# orchestrator to pass aliases that do not exist in pi, contradicting pi's own
-# authoritative routing.
-#
-# This delta rewrites pi's block so the Default Model column reads `inherit` and
-# the prose defers to models.json. Applied to pi ONLY -- claude-code's table is
-# rendered from state.json `claude_phase_assignments` and is correct there.
+# OpenCode Engram source block.
 # ---------------------------------------------------------------------------
-PI_BLOCK="$(extract_shape_from "$PIMODEL_FILE" block)"
-PI_SKILLS="$(extract_shape_from "$PIMODEL_FILE" skills-sentence)"
 OPENCODE_ENGRAM_BLOCK="$(extract_shape_from "$OPENCODE_ENGRAM_FILE" block)"
 OPENCODE_ENGRAM_STOCK_BLOCK='    "experimental.chat.system.transform": async (input, output) => {
       if (output.system.length > 0) {
@@ -565,9 +751,6 @@ OPENCODE_ENGRAM_STOCK_BLOCK='    "experimental.chat.system.transform": async (in
       } else {
         output.system.push(MEMORY_INSTRUCTIONS)
       }'
-
-[ -n "$PI_BLOCK" ] && [ -n "$PI_SKILLS" ] || {
-  echo "FATAL: $PIMODEL_FILE is missing one of the shape blocks" >&2; exit 1; }
 
 [ -n "$OPENCODE_ENGRAM_BLOCK" ] || {
   echo "FATAL: $OPENCODE_ENGRAM_FILE is missing the block shape" >&2; exit 1; }
@@ -673,87 +856,6 @@ init_rubric_apply() {
   return "$rc"
 }
 
-PI_MARK_OPEN='<!-- gentle-ai:sdd-model-assignments -->'
-PI_MARK_CLOSE='<!-- /gentle-ai:sdd-model-assignments -->'
-# The one sentence outside the block that tells the orchestrator to cache and pass
-# `phase -> alias`. Matched by prefix; replaced wholesale.
-PI_SKILLS_ANCHOR='The orchestrator resolves skills from the registry ONCE'
-PI_PROPOSAL_INTERACTIVE_HEAD='Before the `sdd-'
-PI_PROPOSAL_INTERACTIVE_TAIL=' phase in interactive mode, offer the user a proposal question round'
-PI_PROPOSAL_DELEGATION_HEAD='Only for a selected SDD route, delegate to these phase agents: sdd-init, sdd-explore, '
-PI_PROPOSAL_DELEGATION_TAIL=', sdd-spec, sdd-design, sdd-tasks, sdd-apply, sdd-verify, sdd-archive, sdd-onboard.'
-PI_PROPOSAL_TABLE_HEAD='| `sdd-'
-PI_PROPOSAL_TABLE_TAIL='` | exploration (optional) | `proposal` |'
-
-# Pure + idempotent: replaces the marker-delimited body and the alias sentence.
-# Refuses missing/duplicate markers or any absent/duplicate proposal context.
-pimodel_transform() {
-  BLOCK="$PI_BLOCK" SKILLS="$PI_SKILLS" \
-  M_OPEN="$PI_MARK_OPEN" M_CLOSE="$PI_MARK_CLOSE" S_ANCHOR="$PI_SKILLS_ANCHOR" \
-  P1H="$PI_PROPOSAL_INTERACTIVE_HEAD" P1T="$PI_PROPOSAL_INTERACTIVE_TAIL" \
-  P2H="$PI_PROPOSAL_DELEGATION_HEAD" P2T="$PI_PROPOSAL_DELEGATION_TAIL" \
-  P3H="$PI_PROPOSAL_TABLE_HEAD" P3T="$PI_PROPOSAL_TABLE_TAIL" \
-  awk '
-    BEGIN {
-      block = ENVIRON["BLOCK"]; skills = ENVIRON["SKILLS"]
-      m_open = ENVIRON["M_OPEN"]; m_close = ENVIRON["M_CLOSE"]; s_anchor = ENVIRON["S_ANCHOR"]
-      p1h = ENVIRON["P1H"]; p1t = ENVIRON["P1T"]
-      p2h = ENVIRON["P2H"]; p2t = ENVIRON["P2T"]
-      p3h = ENVIRON["P3H"]; p3t = ENVIRON["P3T"]
-    }
-    { line[NR] = $0 }
-    END {
-      n = NR
-      for (i = 1; i <= n; i++) {
-        if (line[i] == m_open)  { opens++; o = i }
-        if (line[i] == m_close) { closes++; c = i }
-      }
-      if (opens != 1 || closes != 1 || !o || !c || o >= c) exit 1
-
-      for (i = 1; i <= n; i++) {
-        if (i > o && i < c) continue                         # drop the old body
-        if (i == c) { print block; print "" }                # canonical body, then the marker
-        rendered = (index(line[i], s_anchor) == 1) ? skills : line[i]
-        # Only the three known Pi SDD contexts use the concrete proposal-agent
-        # identifier. Never rewrite unrelated user or installer text globally.
-        if (index(line[i], p1h) == 1 && index(line[i], p1t) && \
-            (index(line[i], "sdd-propose") || index(line[i], "sdd-proposal"))) {
-          proposal_interactive++
-          sub(/sdd-propose/, "sdd-proposal", rendered)
-        }
-        if (index(line[i], p2h) == 1 && index(line[i], p2t) && \
-            (index(line[i], "sdd-propose") || index(line[i], "sdd-proposal"))) {
-          proposal_delegation++
-          sub(/sdd-propose/, "sdd-proposal", rendered)
-        }
-        if (index(line[i], p3h) == 1 && index(line[i], p3t) && \
-            (index(line[i], "sdd-propose") || index(line[i], "sdd-proposal"))) {
-          proposal_table++
-          sub(/sdd-propose/, "sdd-proposal", rendered)
-        }
-        print rendered
-      }
-      if (proposal_interactive != 1 || proposal_delegation != 1 || proposal_table != 1) exit 1
-      exit 0
-    }
-  '
-}
-
-pimodel_apply() {
-  local file="$1" tmp snapshot rc
-  tmp="$(target_tmp "$file")" || return 4
-  snapshot="$(target_tmp "$file")" || { rm -f -- "$tmp"; return 4; }
-  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
-    rm -f -- "$tmp" "$snapshot"; return 4
-  fi
-  if ! pimodel_transform < "$snapshot" > "$tmp"; then rm -f -- "$tmp" "$snapshot"; return 3; fi
-  if cmp -s "$tmp" "$snapshot"; then rm -f -- "$tmp" "$snapshot"; return 1; fi
-  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$tmp" "$snapshot"; return 0; fi
-  commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
-  rm -f -- "$tmp" "$snapshot"
-  return "$rc"
-}
-
 # ---------------------------------------------------------------------------
 # OpenCode Engram prompt injection.
 #
@@ -840,13 +942,18 @@ opencode_sdd_init_external_target() {
 # rc 0 = written/pending, 1 = already applied, 3 = anchor gone,
 # 4 = operational failure, 5 = target drift.
 rubric_apply_md() {
-  local file="$1" shape="$2" tmp snapshot rc
+  local file="$1" shape="$2" transform tmp snapshot rc
+  case "$shape" in
+    list|prose) transform="rubric_transform_$shape" ;;
+    pi-workflow) transform=pi_rubric_workflow_transform ;;
+    *) return 4 ;;
+  esac
   tmp="$(target_tmp "$file")" || return 4
   snapshot="$(target_tmp "$file")" || { rm -f -- "$tmp"; return 4; }
   if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
     rm -f -- "$tmp" "$snapshot"; return 4
   fi
-  if ! "rubric_transform_$shape" < "$snapshot" > "$tmp"; then rm -f -- "$tmp" "$snapshot"; return 3; fi
+  if ! "$transform" < "$snapshot" > "$tmp"; then rm -f -- "$tmp" "$snapshot"; return 3; fi
   if cmp -s "$tmp" "$snapshot"; then rm -f -- "$tmp" "$snapshot"; return 1; fi
   if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$tmp" "$snapshot"; return 0; fi
   commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
@@ -928,10 +1035,20 @@ while IFS= read -r host; do
   while IFS='|' read -r h surface rel; do
     [ "$h" = "$host" ] || continue
     matched=1
+    unresolved_rel="$rel"
     if ! rel="$(resolve_target_rel "$host" "$rel")" || [ -z "$rel" ]; then
-      report "UNSUPPORTED-VARIANT" "$surface" "unresolved target"
-      MISSING_ANCHOR=1
-      continue
+      case "$host:$unresolved_rel" in
+        pi:@pi-gentle-pi-workflow@)
+          report "PACKAGE-TARGET-CONFIG-FAILURE" "$surface" "$unresolved_rel (ambiguous, conflicting, or unsupported gentle-pi package source)"
+          PACKAGE_TARGET_FAILED=1
+          break 2
+          ;;
+        *)
+          report "UNSUPPORTED-VARIANT" "$surface" "unresolved target"
+          MISSING_ANCHOR=1
+          continue
+          ;;
+      esac
     fi
     file="$HOME/$rel"
     short="${rel}"
@@ -984,8 +1101,12 @@ while IFS= read -r host; do
           *) report "WRITE-FAILED" "persona" "$short"; OPERATION_FAILED=1 ;;
         esac
         ;;
-      rubric-list|rubric-prose)
-        rubric_apply_md "$file" "${surface#rubric-}"; rc=$?
+      rubric-list|rubric-prose|pi-rubric-workflow)
+        case "$surface" in
+          pi-rubric-workflow) shape=pi-workflow ;;
+          *) shape="${surface#rubric-}" ;;
+        esac
+        rubric_apply_md "$file" "$shape"; rc=$?
         case "$rc" in
           0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "rubric-tdd" "$short"; PENDING=1
              else report "applied" "rubric-tdd" "$short"; CHANGED=1; fi ;;
@@ -1075,18 +1196,6 @@ while IFS= read -r host; do
         # This host's template has no strict-TDD forwarding section at all.
         report "n/a" "rubric-tdd" "$short (no strict-TDD section in template)"
         ;;
-      pi-models)
-        pimodel_apply "$file"; rc=$?
-        case "$rc" in
-          0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "pi-models" "$short"; PENDING=1
-             else report "applied" "pi-models" "$short"; CHANGED=1; fi ;;
-          1) report "already-applied" "pi-models" "$short" ;;
-          3) report "ANCHOR-NOT-FOUND" "pi-models" "$short"; MISSING_ANCHOR=1 ;;
-          4) report "WRITE-FAILED" "pi-models" "$short"; OPERATION_FAILED=1 ;;
-          5) report "TARGET-DRIFT" "pi-models" "$short"; TARGET_DRIFT=1 ;;
-          *) report "WRITE-FAILED" "pi-models" "$short"; OPERATION_FAILED=1 ;;
-        esac
-        ;;
     esac
     if [ "$OPERATION_FAILED" -eq 1 ] || [ "$TARGET_DRIFT" -eq 1 ]; then
       break 2
@@ -1099,6 +1208,11 @@ EOF
 done <<HOSTS_EOF
 $HOSTS
 HOSTS_EOF
+
+if [ "$PACKAGE_TARGET_FAILED" -eq 1 ]; then
+  echo "FAIL: Pi package target configuration is ambiguous, conflicting, or unsupported; nothing was written."
+  exit 1
+fi
 
 if [ "$OPERATION_FAILED" -eq 1 ]; then
   echo "FAIL: a target was unsafe or a backup/write operation failed; nothing further was written."

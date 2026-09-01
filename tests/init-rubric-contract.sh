@@ -106,6 +106,59 @@ test_policy_contract() (
   grep -Fq 'only when no rubric state has ever been declared or observed' "$consumer" || fail 'consumer lacks the legacy boundary' || exit 1
 )
 
+validate_rubric_tdd_shape() {
+  awk '
+    BEGIN { expected["list-item"] = expected["prose"] = expected["cache-sentence"] = expected["pi-workflow"] = 1 }
+    /^<!-- shape:[a-z][a-z0-9-]* -->$/ {
+      name = $0; sub(/^<!-- shape:/, "", name); sub(/ -->$/, "", name)
+      if (!(name in expected) || opened[name] || inside) bad = 1
+      else { opened[name] = 1; inside = name }
+      next
+    }
+    /^<!-- \/shape:[a-z][a-z0-9-]* -->$/ {
+      name = $0; sub(/^<!-- \/shape:/, "", name); sub(/ -->$/, "", name)
+      if (!(name in expected) || !inside || name != inside || closed[name]) bad = 1
+      else { closed[name] = 1; inside = "" }
+      next
+    }
+    /<!--[ ]*\/?shape:/ { bad = 1; next }
+    { if (inside) body[inside] = body[inside] (body[inside] == "" ? "" : "\n") $0 }
+    END {
+      for (name in expected) if (opened[name] != 1 || closed[name] != 1 || body[name] == "") bad = 1
+      exit bad
+    }
+  ' "$1"
+}
+
+test_pi_workflow_consumer_contract() (
+  local consumer="$ROOT/deltas/rubric-tdd.md" apply="$ROOT/apply.sh"
+  validate_rubric_tdd_shape "$consumer" || fail 'rubric TDD delta has invalid shape markers' || exit 1
+  for invariant in \
+    '<!-- gentle-ai:pi-rubric-forwarding -->' \
+    '<!-- /gentle-ai:pi-rubric-forwarding -->' \
+    'RubricConsumerEnvelopeV1' \
+    'active/authoritative' \
+    'The orchestrator is the sole resolution owner' \
+    'classify declared task intent first' \
+    'one combined row and canonical-model digest' \
+    'RubricConsumerBlockedV1' \
+    'never fall back to rubric `default` or binary `strict_tdd`' \
+    'only when no rubric state has ever been declared or observed.' \
+    'one effective combined instruction to every `sdd-apply` and `sdd-verify` launch' \
+    'effective MODE is `strict-tdd`' \
+    'The orchestrator is read-only: never generate, mutate, broaden, infer, or select rubric rows'; do
+    grep -Fq "$invariant" "$consumer" || fail "Pi workflow consumer lacks invariant: $invariant" || exit 1
+  done
+  grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' "$apply" || fail 'Pi workflow host row is not resolver-backed' || exit 1
+  if grep -Fqx 'pi|pi-rubric-workflow|.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md' "$apply"; then
+    fail 'Pi workflow host row retains the retired static npm-only path' || exit 1
+  fi
+  grep -Fq "PI_WORKFLOW_BINARY='For \`sdd-apply\` and \`sdd-verify\`, read \`openspec/config.yaml\` when present." "$apply" || fail 'Pi workflow binary anchor is missing' || exit 1
+  grep -Fq 'pi_rubric_workflow_transform()' "$apply" || fail 'Pi workflow transform is missing' || exit 1
+  grep -Fq 'opens != closes || opens > 1 || (opens == 1 && open_line >= close_line)' "$apply" || fail 'Pi workflow marker cardinality guard is missing' || exit 1
+  grep -Fq 'headings != 1 || archives != 1 || binaries != 1' "$apply" || fail 'Pi workflow structural-anchor guard is missing' || exit 1
+)
+
 test_delta_shape_grammar() (
   local dir="$TMP_ROOT/source-shapes" fixture
   mkdir -p "$dir"
@@ -156,6 +209,7 @@ run() {
 }
 
 run test_policy_contract
+run test_pi_workflow_consumer_contract
 run test_delta_shape_grammar
 run test_deterministic_fallback_contract
 

@@ -158,30 +158,6 @@ test_opencode_refuses_custom_body() (
   cmp -s "$file" "$before" || fail 'OpenCode custom body was overwritten' || exit 1
 )
 
-test_pi_exact_sdd_proposal() (
-  local home="$TMP_ROOT/pi-home" backups="$TMP_ROOT/pi-backups" file
-  file="$home/.pi/agent/APPEND_SYSTEM.md"
-  mkdir -p "$(dirname -- "$file")"
-  cat > "$file" <<'EOF'
-Before the `sdd-propose` phase in interactive mode, offer the user a proposal question round.
-Only for a selected SDD route, delegate to these phase agents: sdd-init, sdd-explore, sdd-propose, sdd-spec, sdd-design, sdd-tasks, sdd-apply, sdd-verify, sdd-archive, sdd-onboard.
-<!-- gentle-ai:sdd-model-assignments -->
-## Model Assignments
-| sdd-propose | opus | Architectural decisions |
-<!-- /gentle-ai:sdd-model-assignments -->
-The orchestrator resolves skills from the registry ONCE and passes model aliases.
-| `sdd-propose` | exploration (optional) | `proposal` |
-Unrelated prose: sdd-propose must remain unchanged.
-EOF
-  load_overlay "$home" "$backups"
-  expect_rc 0 pimodel_apply "$file" || exit 1
-  grep -Fq 'Before the `sdd-proposal` phase' "$file" || fail 'Pi interactive proposal identifier was not normalized' || exit 1
-  grep -Fq 'sdd-explore, sdd-proposal, sdd-spec' "$file" || fail 'Pi delegation identifier was not normalized' || exit 1
-  grep -Fq '| `sdd-proposal` | exploration (optional) | `proposal` |' "$file" || fail 'Pi phase table identifier was not normalized' || exit 1
-  grep -Fq 'Unrelated prose: sdd-propose must remain unchanged.' "$file" || fail 'Pi global token replacement changed unrelated text' || exit 1
-  expect_rc 1 pimodel_apply "$file" || exit 1
-)
-
 test_rubric_list_replaces_legacy_item4() (
   local home="$TMP_ROOT/rubric-list-home" backups="$TMP_ROOT/rubric-list-backups" md json loose before json_before transformed expected loose_expected
   md="$home/.pi/agent/APPEND_SYSTEM.md"
@@ -305,52 +281,832 @@ test_rubric_list_refuses_ambiguous_headings() (
   expect_rc 3 rubric_apply_md "$prose_intervening" list || exit 1
 )
 
-test_cli_check_semantics() (
-  local home="$TMP_ROOT/cli-home" backups="$TMP_ROOT/cli-backups" file init_file rc
-  file="$home/.pi/agent/APPEND_SYSTEM.md"
-  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
-  mkdir -p "$home/.gentle-ai" "$(dirname -- "$file")" "$(dirname -- "$init_file")"
+write_pi_workflow_220_fixture() {
+  cat <<'EOF'
+## Strict TDD Forwarding
+
+For `sdd-apply` and `sdd-verify`, read `openspec/config.yaml` when present.
+
+If it declares strict TDD and a test command, include a non-negotiable instruction in the phase prompt:
+
+```text
+STRICT TDD MODE IS ACTIVE. Test runner: <command>. Follow RED, GREEN, TRIANGULATE, REFACTOR. Record evidence.
+```
+
+Do not rely on the child agent to discover this independently.
+
+## Archive Final-State Handoff
+
+When launching `sdd-archive`, forward explicit final-state facts for any work completed after `apply-progress`, `verify-report`, or `sync-report` were persisted — verify warnings fixed in later commits, blockers resolved, tasks finished, updated test or issue counts — with commit or evidence references where available. Those artifacts are intermediate snapshots, valid at the time they were written; the archive report records the state at close, and explicit final-state facts in the `sdd-archive` launch prompt outrank stale snapshot claims.
+EOF
+}
+
+write_pi_workflow_220_with_gap() {
+  local gap="$1"
+  write_pi_workflow_220_fixture | awk -v gap="$gap" '
+    $0 == "## Archive Final-State Handoff" { print ""; print gap; print "" }
+    { print }
+  '
+}
+
+PI_GIT_WORKFLOW_REL='.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md'
+PI_NPM_WORKFLOW_REL='.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md'
+PI_WORKFLOW_PLACEHOLDER='@pi-gentle-pi-workflow@'
+
+prepare_pi_package_home() {
+  local home="$1"
+  mkdir -p "$home/.gentle-ai" "$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents"
   printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
-  {
-    printf '%s\n' '<!-- gentle-ai:persona -->'
-    cat "$ROOT/persona/persona-block.md"
-    printf '%s\n' '<!-- /gentle-ai:persona -->'
-    printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction'
-    printf '%s\n' '4. **Additional condition — per-work-type rubric (project-generated, this file stays project-agnostic).**'
-    printf '%s\n' '   Classify the change against the matching rubric row and forward its instruction to the sub-agent.'
-    printf '%s\n' 'The orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.'
-    printf '%s\n' 'Following cache prose must survive unchanged.'
-    printf '%s\n' '<!-- gentle-ai:sdd-model-assignments -->' 'legacy model assignments' '<!-- /gentle-ai:sdd-model-assignments -->'
-    printf '%s\n' 'The orchestrator resolves skills from the registry ONCE and passes model aliases.'
-    printf '%s\n' 'Before the `sdd-propose` phase in interactive mode, offer the user a proposal question round.'
-    printf '%s\n' 'Only for a selected SDD route, delegate to these phase agents: sdd-init, sdd-explore, sdd-propose, sdd-spec, sdd-design, sdd-tasks, sdd-apply, sdd-verify, sdd-archive, sdd-onboard.'
-    printf '%s\n' '| `sdd-propose` | exploration (optional) | `proposal` |'
-  } > "$file"
+  write_pi_init_stock > "$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+}
+
+write_pi_workflow_at() {
+  local file="$1"
+  mkdir -p "$(dirname -- "$file")"
+  write_pi_workflow_220_fixture > "$file"
+}
+
+write_pi_package_settings() {
+  local home="$1" settings="$2"
+  mkdir -p "$home/.pi/agent"
+  printf '%s\n' "$settings" > "$home/.pi/agent/settings.json"
+}
+
+prepare_no_jq_path() {
+  local bin="$1" node_bin="$2" tool target
+  mkdir -p "$bin"
+  for tool in awk basename bash cat cmp cp cut date dirname env grep head mkdir mktemp mv rm sed stat; do
+    target="$(command -v "$tool")" || return 1
+    ln -s "$target" "$bin/$tool" || return 1
+  done
+  if [ -n "$node_bin" ]; then
+    [ -x "$node_bin" ] || return 1
+    ln -s "$node_bin" "$bin/node" || return 1
+  fi
+}
+
+assert_no_jq_node_path() {
+  local expected_node="$1"
+  if command -v jq >/dev/null 2>&1; then
+    fail 'jq remained available in a no-jq PATH' || return 1
+  fi
+  if [ -n "$expected_node" ]; then
+    [ "$(command -v node)" = "$expected_node" ] || fail 'the intended Node parser was not available in a no-jq PATH' || return 1
+    node -e 'process.exit(0)' || fail 'the intended Node parser did not execute' || return 1
+  elif command -v node >/dev/null 2>&1; then
+    fail 'Node remained available in a no-parser PATH' || return 1
+  fi
+}
+
+# A malformed logical source must stop before stale package roots or any Pi target
+# can be selected. parser_path lets the same cases cover jq and the Node fallback.
+assert_pi_framed_source_fails_closed_before_writes() {
+  local parser="$1" parser_path="$2" label="$3" settings="$4"
+  local home="$TMP_ROOT/pi-$parser-framing-$label-home" backups="$TMP_ROOT/pi-$parser-framing-$label-backups"
+  local npm_workflow init_file npm_before init_before output apply_output rc
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  npm_before="$TMP_ROOT/pi-$parser-framing-$label-npm-before.md"
+  init_before="$TMP_ROOT/pi-$parser-framing-$label-init-before.md"
+  output="$TMP_ROOT/pi-$parser-framing-$label-output.txt"
+  apply_output="$TMP_ROOT/pi-$parser-framing-$label-apply-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_package_settings "$home" "$settings"
+  cp -- "$npm_workflow" "$npm_before"
+  cp -- "$init_file" "$init_before"
+
+  PATH="$parser_path" HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "$parser $label framed source apply returned $rc" || return 1
+  PATH="$parser_path" HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "$parser $label framed source check returned $rc" || return 1
+  grep -Fq 'PACKAGE-TARGET-CONFIG-FAILURE' "$output" || fail "$parser $label framed source did not report package target failure" || return 1
+  cmp -s "$npm_workflow" "$npm_before" || fail "$parser $label framed source changed stale workflow" || return 1
+  cmp -s "$init_file" "$init_before" || fail "$parser $label framed source changed Pi init" || return 1
+  [ ! -e "$backups" ] || fail "$parser $label framed source created backups before writes" || return 1
+}
+
+test_pi_git_only_layout() (
+  local home="$TMP_ROOT/pi-git-only-home" backups="$TMP_ROOT/pi-git-only-backups" expected actual
+  expected="$PI_GIT_WORKFLOW_REL"
+  mkdir -p "$home/.gentle-ai"
+  printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+  write_pi_workflow_at "$home/$expected"
+
+  load_overlay "$home" "$backups"
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'git-only Pi layout did not resolve' || exit 1
+  [ "$actual" = "$expected" ] || fail "git-only Pi layout resolved $actual" || exit 1
+  host_rows | grep -Fqx "pi|pi-rubric-workflow|$PI_WORKFLOW_PLACEHOLDER" || fail 'Pi workflow row is not resolver-backed' || exit 1
+)
+
+test_pi_npm_only_layout() (
+  local home="$TMP_ROOT/pi-npm-only-home" backups="$TMP_ROOT/pi-npm-only-backups" expected actual
+  expected="$PI_NPM_WORKFLOW_REL"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$expected"
+
+  load_overlay "$home" "$backups"
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'npm-only Pi layout did not resolve' || exit 1
+  [ "$actual" = "$expected" ] || fail "npm-only Pi layout resolved $actual" || exit 1
+)
+
+test_pi_both_layouts_git_configured() (
+  local home="$TMP_ROOT/pi-both-git-home" backups="$TMP_ROOT/pi-both-git-backups" actual
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
+
+  load_overlay "$home" "$backups"
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'configured git Pi source did not resolve' || exit 1
+  [ "$actual" = "$PI_GIT_WORKFLOW_REL" ] || fail 'configured git source did not beat stale npm layout' || exit 1
+)
+
+test_pi_both_layouts_npm_configured() (
+  local home="$TMP_ROOT/pi-both-npm-home" backups="$TMP_ROOT/pi-both-npm-backups" actual
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.3.0-rc.1"]}'
+
+  load_overlay "$home" "$backups"
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'configured npm Pi source did not resolve' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'configured npm source did not beat stale git layout' || exit 1
+)
+
+test_pi_both_layouts_without_jq_fails_before_writes() (
+  local home="$TMP_ROOT/pi-no-jq-home" backups="$TMP_ROOT/pi-no-jq-backups" bin="$TMP_ROOT/pi-no-jq-bin"
+  local git_workflow npm_workflow append git_before npm_before append_before output rc node_bin
+  git_workflow="$home/$PI_GIT_WORKFLOW_REL"
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  append="$home/.pi/agent/APPEND_SYSTEM.md"
+  git_before="$TMP_ROOT/pi-no-jq-git-before.md"
+  npm_before="$TMP_ROOT/pi-no-jq-npm-before.md"
+  append_before="$TMP_ROOT/pi-no-jq-append-before.md"
+  output="$TMP_ROOT/pi-no-jq-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$git_workflow"
+  write_pi_workflow_at "$npm_workflow"
+  printf '%s\n' 'installer-owned Pi APPEND' > "$append"
+  cp -- "$git_workflow" "$git_before"
+  cp -- "$npm_workflow" "$npm_before"
+  cp -- "$append" "$append_before"
+  node_bin="$(command -v node)" || fail 'Node is required for no-jq parser coverage' || exit 1
+  prepare_no_jq_path "$bin" "$node_bin" || fail 'could not create no-jq command path' || exit 1
+
+  PATH="$bin"
+  assert_no_jq_node_path "$bin/node" || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "no-jq ambiguous Pi layouts returned $rc" || exit 1
+  grep -Fq 'PACKAGE-TARGET-CONFIG-FAILURE' "$output" || fail 'no-jq ambiguity did not report package target failure' || exit 1
+  cmp -s "$git_workflow" "$git_before" || fail 'no-jq ambiguity changed git workflow' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'no-jq ambiguity changed npm workflow' || exit 1
+  cmp -s "$append" "$append_before" || fail 'no-jq ambiguity changed Pi APPEND' || exit 1
+  [ ! -e "$backups" ] || fail 'no-jq ambiguity created backups before writes' || exit 1
+)
+
+test_pi_no_jq_node_unsupported_exact_source_fails_before_writes() (
+  local home="$TMP_ROOT/pi-no-jq-node-unsupported-home" backups="$TMP_ROOT/pi-no-jq-node-unsupported-backups" bin="$TMP_ROOT/pi-no-jq-node-unsupported-bin"
+  local npm_workflow init_file npm_before init_before output apply_output rc node_bin
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  npm_before="$TMP_ROOT/pi-no-jq-node-unsupported-npm-before.md"
+  init_before="$TMP_ROOT/pi-no-jq-node-unsupported-init-before.md"
+  output="$TMP_ROOT/pi-no-jq-node-unsupported-output.txt"
+  apply_output="$TMP_ROOT/pi-no-jq-node-unsupported-apply-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_package_settings "$home" '{"packages":["file:/opt/gentle-pi"]}'
+  cp -- "$npm_workflow" "$npm_before"
+  cp -- "$init_file" "$init_before"
+  node_bin="$(command -v node)" || fail 'Node is required for no-jq parser coverage' || exit 1
+  prepare_no_jq_path "$bin" "$node_bin" || fail 'could not create no-jq Node command path' || exit 1
+
+  PATH="$bin"
+  assert_no_jq_node_path "$bin/node" || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "no-jq Node unsupported source apply returned $rc" || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "no-jq Node unsupported source check returned $rc" || exit 1
+  grep -Fq 'PACKAGE-TARGET-CONFIG-FAILURE' "$output" || fail 'no-jq Node unsupported source did not report package target failure' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'no-jq Node unsupported source changed the stale workflow' || exit 1
+  cmp -s "$init_file" "$init_before" || fail 'no-jq Node unsupported source changed Pi init' || exit 1
+  [ ! -e "$backups" ] || fail 'no-jq Node unsupported source created backups before writes' || exit 1
+)
+
+test_pi_no_jq_node_canonical_source_selects_configured_root() (
+  local home="$TMP_ROOT/pi-no-jq-node-canonical-home" backups="$TMP_ROOT/pi-no-jq-node-canonical-backups" bin="$TMP_ROOT/pi-no-jq-node-canonical-bin"
+  local actual node_bin
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
+  node_bin="$(command -v node)" || fail 'Node is required for no-jq parser coverage' || exit 1
+  prepare_no_jq_path "$bin" "$node_bin" || fail 'could not create no-jq Node command path' || exit 1
+
+  load_overlay "$home" "$backups"
+  PATH="$bin"
+  assert_no_jq_node_path "$bin/node" || exit 1
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'no-jq Node canonical source did not resolve' || exit 1
+  [ "$actual" = "$PI_GIT_WORKFLOW_REL" ] || fail 'no-jq Node canonical source did not select the configured git layout' || exit 1
+)
+
+test_pi_settings_without_safe_parser_fail_closed() (
+  local home="$TMP_ROOT/pi-no-parser-home" backups="$TMP_ROOT/pi-no-parser-backups" bin="$TMP_ROOT/pi-no-parser-bin"
+  local npm_workflow init_file npm_before init_before output apply_output rc
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  npm_before="$TMP_ROOT/pi-no-parser-npm-before.md"
+  init_before="$TMP_ROOT/pi-no-parser-init-before.md"
+  output="$TMP_ROOT/pi-no-parser-output.txt"
+  apply_output="$TMP_ROOT/pi-no-parser-apply-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.3.0-rc.1"]}'
+  cp -- "$npm_workflow" "$npm_before"
+  cp -- "$init_file" "$init_before"
+  prepare_no_jq_path "$bin" '' || fail 'could not create no-parser command path' || exit 1
+
+  PATH="$bin"
+  assert_no_jq_node_path '' || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "settings without a safe parser apply returned $rc" || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "settings without a safe parser check returned $rc" || exit 1
+  grep -Fq 'PACKAGE-TARGET-CONFIG-FAILURE' "$output" || fail 'settings without a safe parser did not report package target failure' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'settings without a safe parser changed the workflow' || exit 1
+  cmp -s "$init_file" "$init_before" || fail 'settings without a safe parser changed Pi init' || exit 1
+  [ ! -e "$backups" ] || fail 'settings without a safe parser created backups before writes' || exit 1
+)
+
+test_pi_no_jq_node_invalid_settings_fail_closed() (
+  local home="$TMP_ROOT/pi-no-jq-node-invalid-home" backups="$TMP_ROOT/pi-no-jq-node-invalid-backups" bin="$TMP_ROOT/pi-no-jq-node-invalid-bin"
+  local npm_workflow init_file npm_before init_before output apply_output rc node_bin
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  npm_before="$TMP_ROOT/pi-no-jq-node-invalid-npm-before.md"
+  init_before="$TMP_ROOT/pi-no-jq-node-invalid-init-before.md"
+  output="$TMP_ROOT/pi-no-jq-node-invalid-output.txt"
+  apply_output="$TMP_ROOT/pi-no-jq-node-invalid-apply-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_package_settings "$home" '{"packages":['
+  cp -- "$npm_workflow" "$npm_before"
+  cp -- "$init_file" "$init_before"
+  node_bin="$(command -v node)" || fail 'Node is required for no-jq parser coverage' || exit 1
+  prepare_no_jq_path "$bin" "$node_bin" || fail 'could not create no-jq Node command path' || exit 1
+
+  PATH="$bin"
+  assert_no_jq_node_path "$bin/node" || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "no-jq Node invalid settings apply returned $rc" || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "no-jq Node invalid settings check returned $rc" || exit 1
+  grep -Fq 'PACKAGE-TARGET-CONFIG-FAILURE' "$output" || fail 'no-jq Node invalid settings did not report package target failure' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'no-jq Node invalid settings changed the workflow' || exit 1
+  cmp -s "$init_file" "$init_before" || fail 'no-jq Node invalid settings changed Pi init' || exit 1
+  [ ! -e "$backups" ] || fail 'no-jq Node invalid settings created backups before writes' || exit 1
+)
+
+test_pi_no_jq_settings_absent_unique_root_fallback() (
+  local home="$TMP_ROOT/pi-no-jq-settings-absent-home" backups="$TMP_ROOT/pi-no-jq-settings-absent-backups" bin="$TMP_ROOT/pi-no-jq-settings-absent-bin"
+  local actual node_bin
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  node_bin="$(command -v node)" || fail 'Node is required for no-jq parser coverage' || exit 1
+  prepare_no_jq_path "$bin" "$node_bin" || fail 'could not create no-jq Node command path' || exit 1
+
+  load_overlay "$home" "$backups"
+  PATH="$bin"
+  assert_no_jq_node_path "$bin/node" || exit 1
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'no-jq settings-absent unique root did not resolve' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'no-jq settings-absent unique root selected the wrong layout' || exit 1
+)
+
+test_pi_no_jq_node_object_source_selects_npm() (
+  local home="$TMP_ROOT/pi-no-jq-node-object-home" backups="$TMP_ROOT/pi-no-jq-node-object-backups" bin="$TMP_ROOT/pi-no-jq-node-object-bin"
+  local actual node_bin
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":[{"source":"npm:gentle-pi@2.3.0-rc.1"}]}'
+  node_bin="$(command -v node)" || fail 'Node is required for no-jq parser coverage' || exit 1
+  prepare_no_jq_path "$bin" "$node_bin" || fail 'could not create no-jq Node command path' || exit 1
+
+  load_overlay "$home" "$backups"
+  PATH="$bin"
+  assert_no_jq_node_path "$bin/node" || exit 1
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'no-jq Node object source did not resolve' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'no-jq Node object source did not select npm layout' || exit 1
+)
+
+test_pi_jq_json_source_record_framing() (
+  local parser_path="$PATH" case_name settings home backups actual configured
+  command -v jq >/dev/null 2>&1 || fail 'jq is required for jq record-framing coverage' || exit 1
+
+  for case_name in newline carriage-return tab backslash quote; do
+    case "$case_name" in
+      newline) settings='{"packages":["garbage\nnpm:gentle-pi@1"]}' ;;
+      carriage-return) settings='{"packages":["npm:gentle-pi@1\rsuffix"]}' ;;
+      tab) settings='{"packages":["npm:gentle-pi@1\tsuffix"]}' ;;
+      backslash) settings='{"packages":["npm:gentle-pi@1\\suffix"]}' ;;
+      quote) settings='{"packages":["npm:gentle-pi@1\"suffix"]}' ;;
+    esac
+    assert_pi_framed_source_fails_closed_before_writes jq "$parser_path" "$case_name" "$settings" || exit 1
+  done
+
+  home="$TMP_ROOT/pi-jq-framing-canonical-home"
+  backups="$TMP_ROOT/pi-jq-framing-canonical-backups"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.3.0-rc.1"]}'
+  load_overlay "$home" "$backups"
+  configured="$(pi_configured_package_kind)" || fail 'jq canonical framed source did not classify' || exit 1
+  [ "$configured" = npm ] || fail 'jq canonical framed source selected the wrong kind' || exit 1
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'jq canonical framed source did not resolve' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'jq canonical framed source selected the wrong root' || exit 1
+
+  home="$TMP_ROOT/pi-jq-framing-helper-home"
+  backups="$TMP_ROOT/pi-jq-framing-helper-backups"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi-helper@1\nnot-a-gentle-pi-helper"]}'
+  load_overlay "$home" "$backups"
+  expect_rc 1 pi_configured_package_kind || exit 1
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'jq escaped helper source blocked unique npm fallback' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'jq escaped helper source selected the wrong root' || exit 1
+)
+
+test_pi_no_jq_node_json_source_record_framing() (
+  local bin="$TMP_ROOT/pi-no-jq-node-framing-bin" node_bin parser_path case_name settings home backups actual configured
+  node_bin="$(command -v node)" || fail 'Node is required for no-jq record-framing coverage' || exit 1
+  prepare_no_jq_path "$bin" "$node_bin" || fail 'could not create no-jq record-framing command path' || exit 1
+  parser_path="$bin"
+  PATH="$parser_path"
+  assert_no_jq_node_path "$bin/node" || exit 1
+
+  for case_name in newline carriage-return tab backslash quote; do
+    case "$case_name" in
+      newline) settings='{"packages":["garbage\nnpm:gentle-pi@1"]}' ;;
+      carriage-return) settings='{"packages":["npm:gentle-pi@1\rsuffix"]}' ;;
+      tab) settings='{"packages":["npm:gentle-pi@1\tsuffix"]}' ;;
+      backslash) settings='{"packages":["npm:gentle-pi@1\\suffix"]}' ;;
+      quote) settings='{"packages":["npm:gentle-pi@1\"suffix"]}' ;;
+    esac
+    assert_pi_framed_source_fails_closed_before_writes node "$parser_path" "$case_name" "$settings" || exit 1
+  done
+
+  home="$TMP_ROOT/pi-no-jq-node-framing-canonical-home"
+  backups="$TMP_ROOT/pi-no-jq-node-framing-canonical-backups"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.3.0-rc.1"]}'
+  load_overlay "$home" "$backups"
+  configured="$(pi_configured_package_kind)" || fail 'no-jq Node canonical framed source did not classify' || exit 1
+  [ "$configured" = npm ] || fail 'no-jq Node canonical framed source selected the wrong kind' || exit 1
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'no-jq Node canonical framed source did not resolve' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'no-jq Node canonical framed source selected the wrong root' || exit 1
+
+  home="$TMP_ROOT/pi-no-jq-node-framing-helper-home"
+  backups="$TMP_ROOT/pi-no-jq-node-framing-helper-backups"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi-helper@1\nnot-a-gentle-pi-helper"]}'
+  load_overlay "$home" "$backups"
+  expect_rc 1 pi_configured_package_kind || exit 1
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'no-jq Node escaped helper source blocked unique npm fallback' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'no-jq Node escaped helper source selected the wrong root' || exit 1
+)
+
+test_pi_conflicting_configured_sources_fail() (
+  local home="$TMP_ROOT/pi-conflicting-home" backups="$TMP_ROOT/pi-conflicting-backups"
+  local git_workflow npm_workflow git_before npm_before output rc
+  git_workflow="$home/$PI_GIT_WORKFLOW_REL"
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  git_before="$TMP_ROOT/pi-conflicting-git-before.md"
+  npm_before="$TMP_ROOT/pi-conflicting-npm-before.md"
+  output="$TMP_ROOT/pi-conflicting-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$git_workflow"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd","npm:gentle-pi@2.3.0-rc.1"]}'
+  cp -- "$git_workflow" "$git_before"
+  cp -- "$npm_workflow" "$npm_before"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "conflicting Pi sources returned $rc" || exit 1
+  grep -Fq 'PACKAGE-TARGET-CONFIG-FAILURE' "$output" || fail 'conflicting Pi sources did not report package target failure' || exit 1
+  cmp -s "$git_workflow" "$git_before" || fail 'conflicting Pi sources changed git workflow' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'conflicting Pi sources changed npm workflow' || exit 1
+  [ ! -e "$backups" ] || fail 'conflicting Pi sources created backups before writes' || exit 1
+)
+
+test_pi_selected_missing_path_does_not_fallback() (
+  local home="$TMP_ROOT/pi-selected-missing-home" backups="$TMP_ROOT/pi-selected-missing-backups"
+  local git_root npm_workflow npm_before output rc
+  git_root="$home/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi"
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  npm_before="$TMP_ROOT/pi-selected-missing-npm-before.md"
+  output="$TMP_ROOT/pi-selected-missing-output.txt"
+  prepare_pi_package_home "$home"
+  mkdir -p "$git_root/assets"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
+  cp -- "$npm_workflow" "$npm_before"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "selected-missing Pi source returned $rc" || exit 1
+  awk -v path="$PI_GIT_WORKFLOW_REL" '$1 == "MISSING-FILE" && $2 == "pi-rubric-workflow" && $3 == path { found = 1 } END { exit !found }' "$output" || fail 'selected missing git path was not reported' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'selected missing git source fell back to npm workflow' || exit 1
+  [ ! -e "$backups" ] || fail 'selected missing path created backups before writes' || exit 1
+)
+
+test_pi_object_source_selects_npm_with_jq() (
+  local home="$TMP_ROOT/pi-object-source-home" backups="$TMP_ROOT/pi-object-source-backups" actual
+  command -v jq >/dev/null 2>&1 || fail 'jq is required for object-form package-source coverage' || exit 1
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":[{"source":"npm:gentle-pi@2.3.0-rc.1"}]}'
+
+  load_overlay "$home" "$backups"
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'object-form npm source did not resolve' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'object-form npm source did not select npm layout' || exit 1
+)
+
+test_pi_unsupported_configured_source_fails() (
+  local home="$TMP_ROOT/pi-unsupported-source-home" backups="$TMP_ROOT/pi-unsupported-source-backups"
+  local npm_workflow npm_before output rc
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  npm_before="$TMP_ROOT/pi-unsupported-source-npm-before.md"
+  output="$TMP_ROOT/pi-unsupported-source-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_package_settings "$home" '{"packages":["file:/opt/gentle-pi"]}'
+  cp -- "$npm_workflow" "$npm_before"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "unsupported Pi source returned $rc" || exit 1
+  grep -Fq 'PACKAGE-TARGET-CONFIG-FAILURE' "$output" || fail 'unsupported Pi source did not report package target failure' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'unsupported Pi source changed npm workflow' || exit 1
+  [ ! -e "$backups" ] || fail 'unsupported Pi source created backups before writes' || exit 1
+)
+
+test_pi_unrecognized_git_identity_fails_closed_before_fallback() (
+  local home="$TMP_ROOT/pi-unrecognized-git-home" backups="$TMP_ROOT/pi-unrecognized-git-backups"
+  local npm_workflow init_file npm_before init_before output apply_output rc
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  npm_before="$TMP_ROOT/pi-unrecognized-git-npm-before.md"
+  init_before="$TMP_ROOT/pi-unrecognized-git-init-before.md"
+  output="$TMP_ROOT/pi-unrecognized-git-output.txt"
+  apply_output="$TMP_ROOT/pi-unrecognized-git-apply-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_package_settings "$home" '{"packages":["git:example.com/vendor/gentle-pi@deadbeef"]}'
+  cp -- "$npm_workflow" "$npm_before"
+  cp -- "$init_file" "$init_before"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "unrecognized gentle-pi git source returned $rc" || exit 1
+  grep -Fq 'PACKAGE-TARGET-CONFIG-FAILURE' "$output" || fail 'unrecognized gentle-pi git source did not report package target failure' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'unrecognized gentle-pi git source changed stale npm workflow during check' || exit 1
+  cmp -s "$init_file" "$init_before" || fail 'unrecognized gentle-pi git source changed Pi init during check' || exit 1
+  [ ! -e "$backups" ] || fail 'unrecognized gentle-pi git source created backups during check' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "unrecognized gentle-pi git source apply returned $rc" || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'unrecognized gentle-pi git source apply changed stale npm workflow' || exit 1
+  cmp -s "$init_file" "$init_before" || fail 'unrecognized gentle-pi git source apply changed Pi init' || exit 1
+  [ ! -e "$backups" ] || fail 'unrecognized gentle-pi git source apply created backups' || exit 1
+)
+
+test_pi_local_path_identity_fails_closed_before_fallback() (
+  local home="$TMP_ROOT/pi-local-path-home" backups="$TMP_ROOT/pi-local-path-backups"
+  local npm_workflow init_file npm_before init_before output apply_output rc
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  npm_before="$TMP_ROOT/pi-local-path-npm-before.md"
+  init_before="$TMP_ROOT/pi-local-path-init-before.md"
+  output="$TMP_ROOT/pi-local-path-output.txt"
+  apply_output="$TMP_ROOT/pi-local-path-apply-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_package_settings "$home" '{"packages":["path:/opt/gentle-pi"]}'
+  cp -- "$npm_workflow" "$npm_before"
+  cp -- "$init_file" "$init_before"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "unsupported gentle-pi path source returned $rc" || exit 1
+  grep -Fq 'PACKAGE-TARGET-CONFIG-FAILURE' "$output" || fail 'unsupported gentle-pi path source did not report package target failure' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'unsupported gentle-pi path source changed stale npm workflow during check' || exit 1
+  cmp -s "$init_file" "$init_before" || fail 'unsupported gentle-pi path source changed Pi init during check' || exit 1
+  [ ! -e "$backups" ] || fail 'unsupported gentle-pi path source created backups during check' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "unsupported gentle-pi path source apply returned $rc" || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'unsupported gentle-pi path source apply changed stale npm workflow' || exit 1
+  cmp -s "$init_file" "$init_before" || fail 'unsupported gentle-pi path source apply changed Pi init' || exit 1
+  [ ! -e "$backups" ] || fail 'unsupported gentle-pi path source apply created backups' || exit 1
+)
+
+test_pi_unrelated_helper_does_not_block_unique_npm_layout() (
+  local home="$TMP_ROOT/pi-helper-home" backups="$TMP_ROOT/pi-helper-backups" actual
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi-helper@1.0.0"]}'
+
+  load_overlay "$home" "$backups"
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'unrelated gentle-pi-helper source blocked a unique npm layout' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'unrelated gentle-pi-helper source selected the wrong layout' || exit 1
+)
+
+test_pi_canonical_github_forms_select_git() (
+  local form home backups actual index=0
+  for form in \
+    'git:github.com/Gentleman-Programming/gentle-pi@4a71fd' \
+    'git:https://github.com/Gentleman-Programming/gentle-pi.git#4a71fd' \
+    'git:ssh://git@github.com/Gentleman-Programming/gentle-pi.git#4a71fd' \
+    'git:git@github.com:Gentleman-Programming/gentle-pi.git#4a71fd'; do
+    index=$((index + 1))
+    home="$TMP_ROOT/pi-canonical-github-$index-home"
+    backups="$TMP_ROOT/pi-canonical-github-$index-backups"
+    prepare_pi_package_home "$home"
+    write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+    write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+    write_pi_package_settings "$home" "{\"packages\":[\"$form\"]}"
+
+    load_overlay "$home" "$backups"
+    actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail "canonical GitHub source did not resolve: $form" || exit 1
+    [ "$actual" = "$PI_GIT_WORKFLOW_REL" ] || fail "canonical GitHub source did not select git layout: $form" || exit 1
+  done
+)
+
+test_pi_workflow_rubric_forwarding_contract() (
+  local home="$TMP_ROOT/pi-workflow-home" backups="$TMP_ROOT/pi-workflow-backups" stale_backups="$TMP_ROOT/pi-workflow-stale-backups"
+  local append init_file workflow before_append before_workflow expected output after_first stale stale_before
+  append="$home/.pi/agent/APPEND_SYSTEM.md"
+  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  workflow="$home/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md"
+  before_append="$TMP_ROOT/pi-workflow-append-before.md"
+  before_workflow="$TMP_ROOT/pi-workflow-before.md"
+  expected="$TMP_ROOT/pi-workflow-expected.md"
+  output="$TMP_ROOT/pi-workflow-output.txt"
+  after_first="$TMP_ROOT/pi-workflow-after-first.md"
+  stale="$TMP_ROOT/pi-workflow-stale.md"
+  stale_before="$TMP_ROOT/pi-workflow-stale-before.md"
+  mkdir -p "$home/.gentle-ai" "$(dirname -- "$append")" "$(dirname -- "$init_file")" "$(dirname -- "$workflow")"
+  printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+  printf '%s\n' '<!-- installer-owned Pi APPEND -->' 'do not modify' > "$append"
   write_pi_init_stock > "$init_file"
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
+  write_pi_workflow_220_fixture > "$workflow"
+  cp -- "$append" "$before_append"
+  cp -- "$workflow" "$before_workflow"
+
+  load_overlay "$home" "$backups"
+  host_rows | grep -Fqx 'pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md' || fail 'Pi packaged sdd-init asset row is missing' || exit 1
+  host_rows | grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' || fail 'Pi package workflow placeholder row is missing' || exit 1
+  if host_rows | grep -Fq '.pi/agent/APPEND_SYSTEM.md'; then
+    fail 'Pi APPEND_SYSTEM.md is mapped' || exit 1
+  fi
+  pi_rubric_workflow_transform < "$workflow" > "$expected" || fail 'Pi 2.2.0 workflow fixture was refused' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
+  [ "$?" -eq 2 ] || fail 'Pi workflow --check did not report pending work' || exit 1
+  cmp -s "$workflow" "$before_workflow" || fail 'Pi workflow changed during --check' || exit 1
+  cmp -s "$append" "$before_append" || fail 'Pi APPEND changed during workflow --check' || exit 1
+  [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" ] || fail 'Pi workflow --check created a backup' || exit 1
+  [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND --check created a backup' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
+  cmp -s "$workflow" "$expected" || fail 'Pi workflow apply did not install canonical forwarding block' || exit 1
+  cmp -s "$before_workflow" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" || fail 'Pi workflow backup is not the original asset' || exit 1
+  cmp -s "$append" "$before_append" || fail 'Pi APPEND changed during workflow apply' || exit 1
+  [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND was backed up during workflow apply' || exit 1
+  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$init_file" || fail 'Pi sdd-init was not still processed' || exit 1
+
+  for golden in \
+    'RubricConsumerEnvelopeV1' \
+    'active/authoritative' \
+    'The orchestrator is the sole resolution owner' \
+    'classify declared task intent first' \
+    'one combined row and canonical-model digest' \
+    'RubricConsumerBlockedV1' \
+    'never fall back to rubric `default` or binary `strict_tdd`' \
+    'only when no rubric state has ever been declared or observed.' \
+    'one effective combined instruction to every `sdd-apply` and `sdd-verify` launch' \
+    'effective MODE is `strict-tdd`' \
+    'The orchestrator is read-only: never generate, mutate, broaden, infer, or select rubric rows'; do
+    grep -Fq "$golden" "$workflow" || fail "Pi semantic golden is missing: $golden" || exit 1
+  done
+  grep -Fq 'Do not rely on the child agent to discover this independently.' "$workflow" || fail 'Pi binary fallback contract changed' || exit 1
+  grep -Fqx '<!-- gentle-ai:pi-rubric-forwarding -->' "$workflow" || fail 'Pi workflow marker opening is missing' || exit 1
+  grep -Fqx '<!-- /gentle-ai:pi-rubric-forwarding -->' "$workflow" || fail 'Pi workflow marker closing is missing' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
+  [ "$?" -eq 0 ] || fail 'Pi workflow clean --check did not return 0' || exit 1
+  cp -- "$workflow" "$after_first"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
+  cmp -s "$workflow" "$after_first" || fail 'second Pi workflow apply was not byte-idempotent' || exit 1
+
+  sed 's/classify declared task intent first/classify stale intent/' "$workflow" > "$stale"
+  cp -- "$stale" "$workflow"
+  cp -- "$workflow" "$stale_before"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$stale_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
+  cmp -s "$workflow" "$expected" || fail 'Pi stale marker body was not canonically refreshed' || exit 1
+  cmp -s "$stale_before" "$stale_backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" || fail 'Pi stale workflow backup is not the stale original' || exit 1
+)
+
+test_pi_workflow_refuses_malformed_or_stale_structure() (
+  local home="$TMP_ROOT/pi-workflow-refusal-home" backups="$TMP_ROOT/pi-workflow-refusal-backups" file before gap name
+  mkdir -p "$home/.pi/agent/npm/node_modules/gentle-pi/assets"
+  load_overlay "$home" "$backups"
+  CHECK_ONLY=0
+
+  for name in partial duplicate reversed misplaced; do
+    file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/$name.md"
+    case "$name" in
+      partial) gap="$PI_WORKFLOW_MARK_OPEN
+stale partial body" ;;
+      duplicate) gap="$RUBRIC_PI_WORKFLOW
+
+$RUBRIC_PI_WORKFLOW" ;;
+      reversed) gap="$PI_WORKFLOW_MARK_CLOSE
+stale reversed body
+$PI_WORKFLOW_MARK_OPEN" ;;
+      misplaced) gap="unexpected intervening content
+$RUBRIC_PI_WORKFLOW" ;;
+    esac
+    write_pi_workflow_220_with_gap "$gap" > "$file"
+    before="$TMP_ROOT/pi-workflow-$name-before.md"
+    cp -- "$file" "$before"
+    expect_rc 3 rubric_apply_md "$file" pi-workflow || exit 1
+    cmp -s "$file" "$before" || fail "Pi $name marker target changed after refusal" || exit 1
+    [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/$name.md" ] || fail "Pi $name marker refusal created a backup" || exit 1
+  done
+
+  file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/anchor-inside.md"
+  {
+    printf '%s\n' "$PI_WORKFLOW_MARK_OPEN"
+    write_pi_workflow_220_fixture
+    printf '%s\n' "$PI_WORKFLOW_MARK_CLOSE"
+  } > "$file"
+  before="$TMP_ROOT/pi-workflow-anchor-inside-before.md"
+  cp -- "$file" "$before"
+  expect_rc 3 rubric_apply_md "$file" pi-workflow || exit 1
+  cmp -s "$file" "$before" || fail 'Pi anchor-inside-marker target changed after refusal' || exit 1
+  [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/anchor-inside.md" ] || fail 'Pi anchor-inside-marker refusal created a backup' || exit 1
+
+  file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/missing-binary.md"
+  printf '%s\n' '## Strict TDD Forwarding' '' '## Archive Final-State Handoff' > "$file"
+  before="$TMP_ROOT/pi-workflow-missing-binary-before.md"
+  cp -- "$file" "$before"
+  expect_rc 3 rubric_apply_md "$file" pi-workflow || exit 1
+  cmp -s "$file" "$before" || fail 'Pi missing binary anchor target changed after refusal' || exit 1
+
+  file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/changed-binary.md"
+  write_pi_workflow_220_fixture | sed 's/Do not rely on the child agent to discover this independently./Changed binary contract./' > "$file"
+  before="$TMP_ROOT/pi-workflow-changed-binary-before.md"
+  cp -- "$file" "$before"
+  expect_rc 3 rubric_apply_md "$file" pi-workflow || exit 1
+  cmp -s "$file" "$before" || fail 'Pi changed binary anchor target changed after refusal' || exit 1
+)
+
+test_pi_rc3_append_byte_preservation_and_obsolete_transform_removal() (
+  local home="$TMP_ROOT/pi-rc3-home" backups="$TMP_ROOT/pi-rc3-backups" append init_file workflow before workflow_before rc
+  append="$home/.pi/agent/APPEND_SYSTEM.md"
+  init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  workflow="$home/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md"
+  before="$TMP_ROOT/pi-rc3-append-before.md"
+  workflow_before="$TMP_ROOT/pi-rc3-workflow-before.md"
+  mkdir -p "$home/.gentle-ai" "$(dirname -- "$append")" "$(dirname -- "$init_file")" "$(dirname -- "$workflow")"
+  printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+  cat > "$append" <<'EOF'
+<!-- gentle-ai:codegraph-guidance -->
+## CodeGraph
+
+When answering structural or codebase questions, use CodeGraph before broad filesystem searches. This is a hard ordering rule for repo maps, architecture, call flow, dependencies, symbol references, impact analysis, and “how does X work” questions.
+
+Required order for structural/codebase questions:
+
+1. Resolve the project root with `git rev-parse --show-toplevel || pwd`.
+2. Confirm the root is a real project/workspace. Do not ask the user before initializing CodeGraph in a real project. Do not initialize CodeGraph in `$HOME`, temporary directories, or non-project folders.
+3. Check for `<project-root>/.codegraph/` before any broad Read/Glob/Grep filesystem exploration.
+4. If `.codegraph/` is missing and CodeGraph is enabled/available, immediately run `codegraph init <project-root>` once, then use the `codegraph_explore` MCP tool or `codegraph explore "..."`.
+5. Missing .codegraph/ is the trigger to initialize, not a reason to skip CodeGraph. Do not fall back just because `.codegraph/` is missing; a missing index is the trigger to lazy-initialize, not a reason to skip CodeGraph.
+6. Only fall back after CodeGraph init or CodeGraph use fails. Only fall back to normal filesystem tools after CodeGraph init or CodeGraph use fails, and briefly explain the fallback.
+
+Broad Read/Glob/Grep exploration before this CodeGraph check is explicitly discouraged for structural/codebase questions.
+<!-- /gentle-ai:codegraph-guidance -->
+
+<!-- gentle-ai:agent-routing -->
+## Implementation Routing
+
+Route work for the requested outcome with the smallest useful topology. Every change takes exactly one implementation route: direct inline, delegated direct, or optional SDD.
+
+- **Direct inline:** decide or verify from 1–3 files inline. Keep one mechanical, already-understood file change inline only when it needs no research and has no unresolved design decision.
+- **Delegated direct:** delegate one narrow exploration when understanding needs 4+ files; delegate one writer for 2+ non-trivial files. Reading that prepares a write and broad research also delegate.
+- **Optional SDD:** propose SDD only when durable proposal, spec, design, and tasks would materially reduce substantial ambiguity. SDD is selected only by an explicit request or an accepted proposal.
+- File count, changed lines, size, or perceived risk alone never selects SDD and never forces a heavier route.
+- These are implementation routes, not a ban on per-action delegation. Tests, builds, installs, and review actors may still use fresh workers without changing the selected route.
+- Direct and delegated work never create SDD artifacts, prompts, phase attempts, or synthetic SDD runs.
+
+### Receipt-driven development is user-owned
+
+The user controls receipt-driven development with a switch: `gentle-ai review mode enable|disable|status`.
+
+- It is **opt-in and off by default**. Until the user explicitly enables it, reviews do not run and delivery follows ordinary repository policy. Do not treat that as a fault to diagnose or work around.
+- `status` is read-only. It reports the deciding source and the effective mode, and changes nothing. A `default` deciding source means nobody has chosen, so the effective mode is off.
+- When the user asks to stop using receipt-driven development, run `disable`. Do not argue, do not work around it, and do not propose alternatives first.
+- While it is disabled, keep implementing organically through direct inline, delegated direct, or optional SDD: do not start reviews, do not retry, do not reactivate it, and do not fall back to any retired path.
+- Delivery under a disabled switch follows ordinary repository policy and reports `disabled/unmanaged`, never a fabricated approval.
+- Never enable receipt-driven development on the user's behalf unless the user explicitly asks to.
+<!-- /gentle-ai:agent-routing -->
+EOF
+  cp -- "$append" "$before"
+
+  grep -Fqx '<!-- gentle-ai:codegraph-guidance -->' "$append" || fail 'rc.3 fixture lacks the CodeGraph opening marker' || exit 1
+  grep -Fqx '<!-- /gentle-ai:codegraph-guidance -->' "$append" || fail 'rc.3 fixture lacks the CodeGraph closing marker' || exit 1
+  grep -Fqx '<!-- gentle-ai:agent-routing -->' "$append" || fail 'rc.3 fixture lacks the routing opening marker' || exit 1
+  grep -Fqx '<!-- /gentle-ai:agent-routing -->' "$append" || fail 'rc.3 fixture lacks the routing closing marker' || exit 1
+  for obsolete_anchor in \
+    '<!-- gentle-ai:persona -->' \
+    '<!-- /gentle-ai:persona -->' \
+    '#### Strict TDD Forwarding (MANDATORY)' \
+    '3. If the search fails or `strict_tdd` is not found' \
+    '4. **Additional condition — per-work-type rubric' \
+    'The orchestrator resolves TDD status ONCE per session' \
+    'Following cache prose must survive unchanged.' \
+    '<!-- gentle-ai:sdd-model-assignments -->' \
+    '<!-- /gentle-ai:sdd-model-assignments -->' \
+    'The orchestrator resolves skills from the registry ONCE and passes model aliases.' \
+    'Before the `sdd-propose` phase in interactive mode' \
+    'Only for a selected SDD route, delegate to these phase agents:' \
+    '| `sdd-propose` | exploration (optional) | `proposal` |'; do
+    if grep -Fq -- "$obsolete_anchor" "$append"; then
+      fail "rc.3 fixture retained obsolete anchor: $obsolete_anchor" || exit 1
+    fi
+  done
+  write_pi_init_stock > "$init_file"
+  write_pi_workflow_220_fixture > "$workflow"
+  cp -- "$workflow" "$workflow_before"
+
+  load_overlay "$home" "$backups"
+  if host_rows | awk -F'|' '$1 == "pi" && $3 == ".pi/agent/APPEND_SYSTEM.md" { found = 1 } END { exit found ? 0 : 1 }'; then
+    fail 'rc.3 still maps Pi APPEND_SYSTEM.md' || exit 1
+  fi
+  if declare -F pimodel_transform >/dev/null 2>&1; then
+    fail 'rc.3 still loads the obsolete Pi model transform' || exit 1
+  fi
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check >/dev/null
   rc=$?
   [ "$rc" -eq 2 ] || fail "expected --check pending rc 2, got $rc" || exit 1
-  [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail '--check created a backup' || exit 1
-  [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" ] || fail '--check created an init-agent backup' || exit 1
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
-  grep -Fq 'matching rubric row and forward' "$file" && fail 'CLI retained stale item 4 body' && exit 1
-  grep -Fq 'RubricConsumerEnvelopeV1' "$file" || fail 'CLI did not install consumer envelope wording' || exit 1
-  grep -Fq 'never fall back to rubric `default` or binary `strict_tdd`' "$file" || fail 'CLI did not install fail-closed fallback wording' || exit 1
-  grep -Fq 'Following cache prose must survive unchanged.' "$file" || fail 'CLI consumed following cache prose' || exit 1
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
+  cmp -s "$append" "$before" || fail 'Pi APPEND_SYSTEM.md changed during --check' || exit 1
+  [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND_SYSTEM.md was backed up during --check' || exit 1
+  [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" ] || fail '--check created an sdd-init backup' || exit 1
+  [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" ] || fail '--check created a Pi workflow backup' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" >/dev/null || exit 1
+  cmp -s "$append" "$before" || fail 'Pi APPEND_SYSTEM.md changed during apply' || exit 1
+  [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND_SYSTEM.md was backed up during apply' || exit 1
+  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$init_file" || fail 'Pi sdd-init mapping was not applied' || exit 1
+  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$workflow" || fail 'Pi workflow mapping was not applied' || exit 1
+  cmp -s "$workflow_before" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" || fail 'Pi workflow backup is not the original' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check >/dev/null
   rc=$?
   [ "$rc" -eq 0 ] || fail "expected clean --check rc 0, got $rc" || exit 1
+  cmp -s "$append" "$before" || fail 'Pi APPEND_SYSTEM.md changed after a clean check' || exit 1
 )
 
 test_symlink_refusal() (
   local home="$TMP_ROOT/symlink-home" backups="$TMP_ROOT/symlink-backups" target link
   target="$TMP_ROOT/symlink-target.md"
-  link="$home/.pi/agent/APPEND_SYSTEM.md"
+  link="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
   mkdir -p "$(dirname -- "$link")"
   printf '%s\n' 'outside target' > "$target"
   ln -s "$target" "$link"
   load_overlay "$home" "$backups"
-  expect_rc 4 pimodel_apply "$link" || exit 1
+  expect_rc 4 init_rubric_apply "$link" pi || exit 1
   grep -Fqx 'outside target' "$target" || fail 'symlink target changed' || exit 1
 )
 
@@ -390,7 +1146,7 @@ test_installed_hosts_fallback_includes_gemini() (
   installed_hosts | grep -Fqx 'gemini-cli' || fail 'fallback host list omitted Gemini CLI' || exit 1
 )
 
-test_sdd_init_host_rows_cover_cursor_and_copilot() (
+test_sdd_init_host_rows_cover_cursor_copilot_and_pi() (
   local home="$TMP_ROOT/skills-hosts-home" backups="$TMP_ROOT/skills-hosts-backups"
   mkdir -p "$home"
   load_overlay "$home" "$backups"
@@ -400,6 +1156,7 @@ test_sdd_init_host_rows_cover_cursor_and_copilot() (
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md' || fail 'Copilot sdd-init details row is missing' || exit 1
   host_rows | grep -Fqx 'claude-code|persona-split-style|@claude-output-style@' || fail 'Claude selected style row is missing' || exit 1
   host_rows | grep -Fqx 'pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md' || fail 'Pi packaged sdd-init asset row is missing' || exit 1
+  host_rows | grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' || fail 'Pi workflow row is missing' || exit 1
   host_rows | grep -Fqx 'opencode|sdd-init-delegation|.config/opencode/opencode.json' || fail 'OpenCode inline sdd-init delegation row is missing' || exit 1
 )
 
@@ -657,12 +1414,13 @@ test_fresh_224_active_layout_lifecycle() (
   local home="$TMP_ROOT/fresh-224-home" backups="$TMP_ROOT/fresh-224-backups" output rc config_before
   local claude="$home/.claude/CLAUDE.md" gentleman="$home/.claude/output-styles/gentleman.md"
   local pi="$home/.pi/agent/APPEND_SYSTEM.md" pi_init="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  local pi_workflow="$home/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md"
   local config="$home/.config/opencode/opencode.json" opencode_skill="$home/.config/opencode/skills/sdd-init/SKILL.md"
 
   mkdir -p "$home/.gentle-ai" "$(dirname -- "$claude")" "$(dirname -- "$gentleman")" \
     "$(dirname -- "$home/.claude/skills/_shared/sdd-orchestrator-workflow.md")" \
     "$(dirname -- "$home/.claude/skills/sdd-init/references/init-details.md")" \
-    "$(dirname -- "$pi")" "$(dirname -- "$pi_init")" \
+    "$(dirname -- "$pi")" "$(dirname -- "$pi_init")" "$(dirname -- "$pi_workflow")" \
     "$(dirname -- "$config")" "$(dirname -- "$home/.config/opencode/AGENTS.md")" \
     "$(dirname -- "$home/.config/opencode/plugins/engram.ts")" \
     "$(dirname -- "$opencode_skill")" \
@@ -675,6 +1433,7 @@ test_fresh_224_active_layout_lifecycle() (
   write_init_details_stock > "$home/.claude/skills/sdd-init/references/init-details.md"
   write_pi_append_stock > "$pi"
   write_pi_init_stock > "$pi_init"
+  write_pi_workflow_220_fixture > "$pi_workflow"
   {
     printf '%s\n' '<!-- gentle-ai:persona -->'
     cat "$ROOT/persona/persona-block.md"
@@ -694,6 +1453,7 @@ test_fresh_224_active_layout_lifecycle() (
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
   grep -Fq '# Neutral Output Style' "$gentleman" || fail 'fresh 2.2.4 Claude style was not transformed' || exit 1
   grep -Fq 'allowed_answers: strict|rubric' "$pi_init" || fail 'fresh 2.2.4 Pi executable asset was not transformed' || exit 1
+  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$pi_workflow" || fail 'fresh 2.2.4 Pi package workflow was not transformed' || exit 1
   grep -Fq 'single writer of project TDD policy' "$opencode_skill" || fail 'fresh 2.2.4 OpenCode skill was not transformed' || exit 1
   [ ! -e "$home/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'fresh 2.2.4 layout manufactured an OpenCode prompt file' || exit 1
   jq -e '.agent["sdd-init"].prompt | contains("~/.config/opencode/skills/sdd-init/SKILL.md")' "$config" >/dev/null || fail 'fresh 2.2.4 OpenCode sdd-init prompt does not delegate to its skill' || exit 1
@@ -904,15 +1664,37 @@ run test_claude_missing_anchor
 run test_claude_duplicate_markers
 run test_opencode_stock_and_guarded_noop
 run test_opencode_refuses_custom_body
-run test_pi_exact_sdd_proposal
 run test_rubric_list_replaces_legacy_item4
 run test_rubric_list_refuses_ambiguous_headings
-run test_cli_check_semantics
+run test_pi_git_only_layout
+run test_pi_npm_only_layout
+run test_pi_both_layouts_git_configured
+run test_pi_both_layouts_npm_configured
+run test_pi_both_layouts_without_jq_fails_before_writes
+run test_pi_no_jq_node_unsupported_exact_source_fails_before_writes
+run test_pi_no_jq_node_canonical_source_selects_configured_root
+run test_pi_settings_without_safe_parser_fail_closed
+run test_pi_no_jq_node_invalid_settings_fail_closed
+run test_pi_no_jq_settings_absent_unique_root_fallback
+run test_pi_no_jq_node_object_source_selects_npm
+run test_pi_jq_json_source_record_framing
+run test_pi_no_jq_node_json_source_record_framing
+run test_pi_conflicting_configured_sources_fail
+run test_pi_selected_missing_path_does_not_fallback
+run test_pi_object_source_selects_npm_with_jq
+run test_pi_unsupported_configured_source_fails
+run test_pi_unrecognized_git_identity_fails_closed_before_fallback
+run test_pi_local_path_identity_fails_closed_before_fallback
+run test_pi_unrelated_helper_does_not_block_unique_npm_layout
+run test_pi_canonical_github_forms_select_git
+run test_pi_workflow_rubric_forwarding_contract
+run test_pi_workflow_refuses_malformed_or_stale_structure
+run test_pi_rc3_append_byte_preservation_and_obsolete_transform_removal
 run test_symlink_refusal
 run test_backup_failure_is_closed
 run test_target_drift_is_closed
 run test_installed_hosts_fallback_includes_gemini
-run test_sdd_init_host_rows_cover_cursor_and_copilot
+run test_sdd_init_host_rows_cover_cursor_copilot_and_pi
 run test_antigravity_skill_root_resolution
 run test_claude_style_resolution_refuses_ambiguity
 run test_opencode_sdd_init_inline_delegation_validation
