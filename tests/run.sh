@@ -309,21 +309,32 @@ write_pi_workflow_220_with_gap() {
   '
 }
 
-PI_GIT_WORKFLOW_REL='.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md'
-PI_NPM_WORKFLOW_REL='.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md'
+PI_GIT_PACKAGE_ROOT_REL='.pi/agent/git/github.com/Gentleman-Programming/gentle-pi'
+PI_NPM_PACKAGE_ROOT_REL='.pi/agent/npm/node_modules/gentle-pi'
+PI_GIT_WORKFLOW_REL="$PI_GIT_PACKAGE_ROOT_REL/assets/sdd-orchestrator-workflow.md"
+PI_NPM_WORKFLOW_REL="$PI_NPM_PACKAGE_ROOT_REL/assets/sdd-orchestrator-workflow.md"
+PI_GIT_INIT_REL="$PI_GIT_PACKAGE_ROOT_REL/assets/agents/sdd-init.md"
+PI_NPM_INIT_REL="$PI_NPM_PACKAGE_ROOT_REL/assets/agents/sdd-init.md"
 PI_WORKFLOW_PLACEHOLDER='@pi-gentle-pi-workflow@'
+PI_SDD_INIT_PLACEHOLDER='@pi-gentle-pi-sdd-init@'
 
 prepare_pi_package_home() {
   local home="$1"
   mkdir -p "$home/.gentle-ai" "$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents"
   printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
-  write_pi_init_stock > "$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  write_pi_init_stock > "$home/$PI_NPM_INIT_REL"
 }
 
 write_pi_workflow_at() {
   local file="$1"
   mkdir -p "$(dirname -- "$file")"
   write_pi_workflow_220_fixture > "$file"
+}
+
+write_pi_init_at() {
+  local file="$1"
+  mkdir -p "$(dirname -- "$file")"
+  write_pi_init_stock > "$file"
 }
 
 write_pi_package_settings() {
@@ -389,51 +400,63 @@ assert_pi_framed_source_fails_closed_before_writes() {
 }
 
 test_pi_git_only_layout() (
-  local home="$TMP_ROOT/pi-git-only-home" backups="$TMP_ROOT/pi-git-only-backups" expected actual
-  expected="$PI_GIT_WORKFLOW_REL"
+  local home="$TMP_ROOT/pi-git-only-home" backups="$TMP_ROOT/pi-git-only-backups" workflow init
   mkdir -p "$home/.gentle-ai"
   printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
-  write_pi_workflow_at "$home/$expected"
+  write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_init_at "$home/$PI_GIT_INIT_REL"
 
   load_overlay "$home" "$backups"
-  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'git-only Pi layout did not resolve' || exit 1
-  [ "$actual" = "$expected" ] || fail "git-only Pi layout resolved $actual" || exit 1
+  workflow="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'git-only Pi workflow did not resolve' || exit 1
+  init="$(resolve_target_rel pi "$PI_SDD_INIT_PLACEHOLDER")" || fail 'git-only Pi sdd-init did not resolve' || exit 1
+  [ "$workflow" = "$PI_GIT_WORKFLOW_REL" ] || fail "git-only Pi workflow resolved $workflow" || exit 1
+  [ "$init" = "$PI_GIT_INIT_REL" ] || fail "git-only Pi sdd-init resolved $init" || exit 1
   host_rows | grep -Fqx "pi|pi-rubric-workflow|$PI_WORKFLOW_PLACEHOLDER" || fail 'Pi workflow row is not resolver-backed' || exit 1
+  host_rows | grep -Fqx "pi|sdd-init-pi|$PI_SDD_INIT_PLACEHOLDER" || fail 'Pi sdd-init row is not resolver-backed' || exit 1
 )
 
 test_pi_npm_only_layout() (
-  local home="$TMP_ROOT/pi-npm-only-home" backups="$TMP_ROOT/pi-npm-only-backups" expected actual
-  expected="$PI_NPM_WORKFLOW_REL"
+  local home="$TMP_ROOT/pi-npm-only-home" backups="$TMP_ROOT/pi-npm-only-backups" workflow init
   prepare_pi_package_home "$home"
-  write_pi_workflow_at "$home/$expected"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
 
   load_overlay "$home" "$backups"
-  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'npm-only Pi layout did not resolve' || exit 1
-  [ "$actual" = "$expected" ] || fail "npm-only Pi layout resolved $actual" || exit 1
+  workflow="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'npm-only Pi workflow did not resolve' || exit 1
+  init="$(resolve_target_rel pi "$PI_SDD_INIT_PLACEHOLDER")" || fail 'npm-only Pi sdd-init did not resolve' || exit 1
+  [ "$workflow" = "$PI_NPM_WORKFLOW_REL" ] || fail "npm-only Pi workflow resolved $workflow" || exit 1
+  [ "$init" = "$PI_NPM_INIT_REL" ] || fail "npm-only Pi sdd-init resolved $init" || exit 1
 )
 
 test_pi_both_layouts_git_configured() (
-  local home="$TMP_ROOT/pi-both-git-home" backups="$TMP_ROOT/pi-both-git-backups" actual
+  local home="$TMP_ROOT/pi-both-git-home" backups="$TMP_ROOT/pi-both-git-backups" workflow init
   prepare_pi_package_home "$home"
   write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_init_at "$home/$PI_GIT_INIT_REL"
   write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
   write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
 
   load_overlay "$home" "$backups"
-  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'configured git Pi source did not resolve' || exit 1
-  [ "$actual" = "$PI_GIT_WORKFLOW_REL" ] || fail 'configured git source did not beat stale npm layout' || exit 1
+  workflow="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'configured git Pi workflow did not resolve' || exit 1
+  init="$(resolve_target_rel pi "$PI_SDD_INIT_PLACEHOLDER")" || fail 'configured git Pi sdd-init did not resolve' || exit 1
+  [ "$workflow" = "$PI_GIT_WORKFLOW_REL" ] || fail 'configured git source did not beat stale npm workflow' || exit 1
+  [ "$init" = "$PI_GIT_INIT_REL" ] || fail 'configured git source did not beat stale npm sdd-init' || exit 1
+  [ "${workflow%/assets/sdd-orchestrator-workflow.md}" = "${init%/assets/agents/sdd-init.md}" ] || fail 'configured git Pi assets did not share one package root' || exit 1
 )
 
 test_pi_both_layouts_npm_configured() (
-  local home="$TMP_ROOT/pi-both-npm-home" backups="$TMP_ROOT/pi-both-npm-backups" actual
+  local home="$TMP_ROOT/pi-both-npm-home" backups="$TMP_ROOT/pi-both-npm-backups" workflow init
   prepare_pi_package_home "$home"
   write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
+  write_pi_init_at "$home/$PI_GIT_INIT_REL"
   write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
   write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.3.0-rc.1"]}'
 
   load_overlay "$home" "$backups"
-  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'configured npm Pi source did not resolve' || exit 1
-  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'configured npm source did not beat stale git layout' || exit 1
+  workflow="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'configured npm Pi workflow did not resolve' || exit 1
+  init="$(resolve_target_rel pi "$PI_SDD_INIT_PLACEHOLDER")" || fail 'configured npm Pi sdd-init did not resolve' || exit 1
+  [ "$workflow" = "$PI_NPM_WORKFLOW_REL" ] || fail 'configured npm source did not beat stale git workflow' || exit 1
+  [ "$init" = "$PI_NPM_INIT_REL" ] || fail 'configured npm source did not beat stale git sdd-init' || exit 1
+  [ "${workflow%/assets/sdd-orchestrator-workflow.md}" = "${init%/assets/agents/sdd-init.md}" ] || fail 'configured npm Pi assets did not share one package root' || exit 1
 )
 
 test_pi_both_layouts_without_jq_fails_before_writes() (
@@ -715,23 +738,108 @@ test_pi_conflicting_configured_sources_fail() (
 
 test_pi_selected_missing_path_does_not_fallback() (
   local home="$TMP_ROOT/pi-selected-missing-home" backups="$TMP_ROOT/pi-selected-missing-backups"
-  local git_root npm_workflow npm_before output rc
+  local git_root npm_workflow npm_init npm_before npm_init_before output rc
   git_root="$home/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi"
   npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  npm_init="$home/$PI_NPM_INIT_REL"
   npm_before="$TMP_ROOT/pi-selected-missing-npm-before.md"
+  npm_init_before="$TMP_ROOT/pi-selected-missing-npm-init-before.md"
   output="$TMP_ROOT/pi-selected-missing-output.txt"
   prepare_pi_package_home "$home"
   mkdir -p "$git_root/assets"
+  write_pi_init_at "$home/$PI_GIT_INIT_REL"
   write_pi_workflow_at "$npm_workflow"
   write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
   cp -- "$npm_workflow" "$npm_before"
+  cp -- "$npm_init" "$npm_init_before"
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
   rc=$?
   [ "$rc" -eq 1 ] || fail "selected-missing Pi source returned $rc" || exit 1
-  awk -v path="$PI_GIT_WORKFLOW_REL" '$1 == "MISSING-FILE" && $2 == "pi-rubric-workflow" && $3 == path { found = 1 } END { exit !found }' "$output" || fail 'selected missing git path was not reported' || exit 1
+  awk -v path="$PI_GIT_WORKFLOW_REL" '$1 == "MISSING-FILE" && $2 == "pi-rubric-workflow" && $3 == path { found = 1 } END { exit !found }' "$output" || fail 'selected missing git workflow was not reported' || exit 1
   cmp -s "$npm_workflow" "$npm_before" || fail 'selected missing git source fell back to npm workflow' || exit 1
+  cmp -s "$npm_init" "$npm_init_before" || fail 'selected missing git workflow fell back to npm sdd-init' || exit 1
   [ ! -e "$backups" ] || fail 'selected missing path created backups before writes' || exit 1
+)
+
+test_pi_selected_missing_sdd_init_does_not_fallback() (
+  local home="$TMP_ROOT/pi-selected-missing-init-home" backups="$TMP_ROOT/pi-selected-missing-init-backups"
+  local git_workflow npm_workflow npm_init append git_before npm_before npm_init_before append_before output apply_output rc
+  git_workflow="$home/$PI_GIT_WORKFLOW_REL"
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  npm_init="$home/$PI_NPM_INIT_REL"
+  append="$home/.pi/agent/APPEND_SYSTEM.md"
+  git_before="$TMP_ROOT/pi-selected-missing-init-git-before.md"
+  npm_before="$TMP_ROOT/pi-selected-missing-init-npm-before.md"
+  npm_init_before="$TMP_ROOT/pi-selected-missing-init-npm-init-before.md"
+  append_before="$TMP_ROOT/pi-selected-missing-init-append-before.md"
+  output="$TMP_ROOT/pi-selected-missing-init-output.txt"
+  apply_output="$TMP_ROOT/pi-selected-missing-init-apply-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$git_workflow"
+  write_pi_workflow_at "$npm_workflow"
+  printf '%s\n' 'installer-owned Pi APPEND' > "$append"
+  write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
+  cp -- "$git_workflow" "$git_before"
+  cp -- "$npm_workflow" "$npm_before"
+  cp -- "$npm_init" "$npm_init_before"
+  cp -- "$append" "$append_before"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "selected missing Pi sdd-init check returned $rc" || exit 1
+  awk -v path="$PI_GIT_INIT_REL" '$1 == "MISSING-FILE" && $2 == "sdd-init-pi" && $3 == path { found = 1 } END { exit !found }' "$output" || fail 'selected missing git sdd-init was not reported' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "selected missing Pi sdd-init apply returned $rc" || exit 1
+  cmp -s "$git_workflow" "$git_before" || fail 'missing git sdd-init allowed a git workflow write' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'missing git sdd-init fell back to npm workflow' || exit 1
+  cmp -s "$npm_init" "$npm_init_before" || fail 'missing git sdd-init fell back to npm sdd-init' || exit 1
+  cmp -s "$append" "$append_before" || fail 'missing git sdd-init changed Pi APPEND' || exit 1
+  [ ! -e "$backups" ] || fail 'missing git sdd-init created backups before writes' || exit 1
+)
+
+test_pi_selected_unsafe_sdd_init_blocks_preflight() (
+  local home="$TMP_ROOT/pi-selected-unsafe-init-home" backups="$TMP_ROOT/pi-selected-unsafe-init-backups"
+  local git_init outside git_workflow npm_workflow append outside_before git_before npm_before append_before output apply_output rc
+  git_init="$home/$PI_GIT_INIT_REL"
+  outside="$TMP_ROOT/pi-selected-unsafe-init-outside.md"
+  git_workflow="$home/$PI_GIT_WORKFLOW_REL"
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  append="$home/.pi/agent/APPEND_SYSTEM.md"
+  outside_before="$TMP_ROOT/pi-selected-unsafe-init-outside-before.md"
+  git_before="$TMP_ROOT/pi-selected-unsafe-init-git-before.md"
+  npm_before="$TMP_ROOT/pi-selected-unsafe-init-npm-before.md"
+  append_before="$TMP_ROOT/pi-selected-unsafe-init-append-before.md"
+  output="$TMP_ROOT/pi-selected-unsafe-init-output.txt"
+  apply_output="$TMP_ROOT/pi-selected-unsafe-init-apply-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$git_workflow"
+  write_pi_workflow_at "$npm_workflow"
+  mkdir -p "$(dirname -- "$git_init")"
+  printf '%s\n' 'outside sdd-init target' > "$outside"
+  ln -s "$outside" "$git_init"
+  printf '%s\n' 'installer-owned Pi APPEND' > "$append"
+  write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
+  cp -- "$outside" "$outside_before"
+  cp -- "$git_workflow" "$git_before"
+  cp -- "$npm_workflow" "$npm_before"
+  cp -- "$append" "$append_before"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "unsafe selected Pi sdd-init check returned $rc" || exit 1
+  awk -v path="$PI_GIT_INIT_REL" '$1 == "UNSAFE-TARGET" && $2 == "sdd-init-pi" && $3 == path { found = 1 } END { exit !found }' "$output" || fail 'unsafe selected git sdd-init was not reported' || exit 1
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "unsafe selected Pi sdd-init apply returned $rc" || exit 1
+  cmp -s "$outside" "$outside_before" || fail 'unsafe sdd-init link target changed' || exit 1
+  cmp -s "$git_workflow" "$git_before" || fail 'unsafe git sdd-init allowed a git workflow write' || exit 1
+  cmp -s "$npm_workflow" "$npm_before" || fail 'unsafe git sdd-init changed stale npm workflow' || exit 1
+  cmp -s "$append" "$append_before" || fail 'unsafe git sdd-init changed Pi APPEND' || exit 1
+  [ ! -e "$backups" ] || fail 'unsafe git sdd-init created backups before writes' || exit 1
 )
 
 test_pi_object_source_selects_npm_with_jq() (
@@ -882,8 +990,8 @@ test_pi_workflow_rubric_forwarding_contract() (
   cp -- "$workflow" "$before_workflow"
 
   load_overlay "$home" "$backups"
-  host_rows | grep -Fqx 'pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md' || fail 'Pi packaged sdd-init asset row is missing' || exit 1
-  host_rows | grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' || fail 'Pi package workflow placeholder row is missing' || exit 1
+  host_rows | grep -Fqx "pi|sdd-init-pi|$PI_SDD_INIT_PLACEHOLDER" || fail 'Pi packaged sdd-init asset row is not resolver-backed' || exit 1
+  host_rows | grep -Fqx "pi|pi-rubric-workflow|$PI_WORKFLOW_PLACEHOLDER" || fail 'Pi package workflow placeholder row is missing' || exit 1
   if host_rows | grep -Fq '.pi/agent/APPEND_SYSTEM.md'; then
     fail 'Pi APPEND_SYSTEM.md is mapped' || exit 1
   fi
@@ -1155,8 +1263,8 @@ test_sdd_init_host_rows_cover_cursor_copilot_and_pi() (
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-skill|.copilot/skills/sdd-init/SKILL.md' || fail 'Copilot sdd-init skill row is missing' || exit 1
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md' || fail 'Copilot sdd-init details row is missing' || exit 1
   host_rows | grep -Fqx 'claude-code|persona-split-style|@claude-output-style@' || fail 'Claude selected style row is missing' || exit 1
-  host_rows | grep -Fqx 'pi|sdd-init-pi|.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md' || fail 'Pi packaged sdd-init asset row is missing' || exit 1
-  host_rows | grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' || fail 'Pi workflow row is missing' || exit 1
+  host_rows | grep -Fqx "pi|sdd-init-pi|$PI_SDD_INIT_PLACEHOLDER" || fail 'Pi packaged sdd-init row is not resolver-backed' || exit 1
+  host_rows | grep -Fqx "pi|pi-rubric-workflow|$PI_WORKFLOW_PLACEHOLDER" || fail 'Pi workflow row is missing' || exit 1
   host_rows | grep -Fqx 'opencode|sdd-init-delegation|.config/opencode/opencode.json' || fail 'OpenCode inline sdd-init delegation row is missing' || exit 1
 )
 
@@ -1681,6 +1789,8 @@ run test_pi_jq_json_source_record_framing
 run test_pi_no_jq_node_json_source_record_framing
 run test_pi_conflicting_configured_sources_fail
 run test_pi_selected_missing_path_does_not_fallback
+run test_pi_selected_missing_sdd_init_does_not_fallback
+run test_pi_selected_unsafe_sdd_init_blocks_preflight
 run test_pi_object_source_selects_npm_with_jq
 run test_pi_unsupported_configured_source_fails
 run test_pi_unrecognized_git_identity_fails_closed_before_fallback
