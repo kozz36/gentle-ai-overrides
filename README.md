@@ -25,7 +25,11 @@ cd ~/gentle-ai-overrides
 
 Run the overlay after every `gentle-ai sync`, `gentle-ai upgrade`, or
 `gentle-ai install`. Gentle AI regenerates host configuration from embedded
-templates during those operations, replacing manual edits.
+templates during those operations, replacing manual edits. After any
+`gentle-pi` package update, run `./apply.sh --check` and reapply: the Pi rubric
+overlay targets a package asset that package installation replaces. Pi may
+install that package from git or npm; the overlay resolves the configured source
+rather than assuming one layout.
 
 ## Usage
 
@@ -39,7 +43,7 @@ Exit codes:
 | Code | Meaning |
 | --- | --- |
 | `0` | Overlay applied, or already applied (no-op). |
-| `1` | Safety failure: missing/ambiguous anchor, unsafe target, failed backup/write, or concurrent target change. |
+| `1` | Safety failure: missing/ambiguous anchor, unsafe target, ambiguous/conflicting Pi package source, failed backup/write, or concurrent target change. |
 | `2` | `--check` only: work is pending. |
 
 `apply.sh` never invokes Gentle AI and never modifies
@@ -147,13 +151,14 @@ commentary, whereas item 4 of a list whose heading says **(MANDATORY)** inherits
 force. The overlay originally injected the loose-paragraph form; `apply.sh` now
 **migrates** it to the numbered form wherever it finds it.
 
-The delta file carries three blocks, each fenced by `<!-- shape:NAME -->` markers:
+The delta file carries four blocks, each fenced by `<!-- shape:NAME -->` markers:
 
 | Block | Used for |
 | --- | --- |
 | `list-item` | the canonical item 4 — every host that has the numbered list |
 | `prose` | the condensed paragraph — the one host that has no list (see below) |
-| `cache-sentence` | the richer "resolves the rubric + `strict_tdd` ONCE per session … re-classifying each apply slice by its diff signature" sentence, which replaces the weaker "resolves TDD status ONCE per session" wherever that sentence exists |
+| `cache-sentence` | the session-cached, declared-intent classification sentence that replaces the weaker "resolves TDD status ONCE per session" wherever that sentence exists |
+| `pi-workflow` | the marker-delimited Pi package workflow forwarding block after its binary Strict TDD contract |
 
 The canonical wording of `list-item` and `cache-sentence` is maintained in
 `deltas/rubric-tdd.md`, which is the overlay's source of truth.
@@ -190,38 +195,57 @@ Any visible agent, missing file, symlink, arbitrary reference, traversal,
 redirected/refusal text, or unsupported JSON shape fails global preflight
 before a host file is written.
 
-### 5. `deltas/pi-model-agnostic.md` — pi's Model Assignments, made host-agnostic
+### 5. Pi rc.3 compatibility ownership
 
-gentle-ai renders the SDD **Model Assignments** table with *Claude* aliases —
-`opus` / `sonnet` / `haiku` — into every host, pi included, together with the prose
-*"If you lack access to the assigned model, substitute `sonnet` and continue."*
+As of rc.3, this overlay owns **no region** of
+`~/.pi/agent/APPEND_SYSTEM.md`: `apply.sh` does not map, read, transform, back up, or
+write it. The ownership split is:
 
-That is wrong for pi. pi has its own authoritative phase routing in
-`~/.pi/gentle-ai/models.json`, which maps every phase (`sdd-*`, `jd-*`, `review-*`,
-`gentle-ai-worker`) to a concrete `openai-codex/gpt-5.6-{luna,terra,sol}` model plus a
-thinking level. **pi cannot resolve `opus`/`sonnet`/`haiku` at all** — so the rendered
-table tells pi's orchestrator to pass aliases that do not exist there, contradicting
-pi's own routing.
+- **Persona:** gentle-pi injects it at runtime, so an APPEND persona would duplicate the
+  channel.
+- **TDD/rubric:** the old eager Pi APPEND item-4 injection is retired. This overlay
+  instead owns a marker-delimited block in gentle-pi's package lazy workflow (below).
+- **Model routing:** Pi owns it outside APPEND through its models, frontmatter, and
+  subagent mechanisms.
+- **CodeGraph guidance:** the installer/community-tool owns it; leaving APPEND entirely
+  untouched preserves it.
 
-The delta rewrites pi's block so that:
+The Pi mappings retained by this overlay are:
 
-- every `Default Model` cell reads `inherit`;
-- the prose defers to `models.json` and states the orchestrator MUST NOT pass an
-  explicit model alias — phases inherit;
-- the `substitute sonnet` fallback is gone;
-- the Phase and Reason columns, the heading, and the
-  `<!-- gentle-ai:sdd-model-assignments -->` markers are preserved intact.
+- `~/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md`, the active
+  gentle-pi `sdd-init` asset, which receives the marker-delimited SDD-init rubric
+  producer contract described above; and
+- gentle-pi's package-owned lazy workflow, where the overlay inserts its
+  `gentle-ai:pi-rubric-forwarding` block after the workflow's binary Strict TDD contract.
 
-One sentence *outside* the block also had to change. gentle-ai emits:
+The workflow target is resolved from the single recognized gentle-pi source in
+`~/.pi/agent/settings.json` (`packages` entries may be strings or objects with a
+`source` field):
 
-> It also reads the Model Assignments table once per session and caches
-> `phase → alias` for SDD/Judgment-Day Agent calls only.
+- canonical GitHub git sources — shorthand
+  `git:github.com/Gentleman-Programming/gentle-pi@<ref>`, HTTPS
+  `git:https://github.com/Gentleman-Programming/gentle-pi.git#<ref>`, or SSH
+  `git:ssh://git@github.com/Gentleman-Programming/gentle-pi.git#<ref>` /
+  `git:git@github.com:Gentleman-Programming/gentle-pi.git#<ref>` — →
+  `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md`
+- exact npm package `npm:gentle-pi@<version>` (or unprefixed `gentle-pi`) →
+  `~/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md`
 
-That is the only directive actually telling pi to pass aliases, so the delta replaces
-it with the inherit-based wording. (There is **no** literal "Agent tool calls … MUST
-include `model`" gate in pi's file; this sentence is the real gate.)
-
-**pi only.** See the scope note below.
+Every configured source whose exact package, repository, or local-path basename is
+`gentle-pi` is classified. Any noncanonical GitHub, local/path, or otherwise unsupported
+`gentle-pi` identity reports `PACKAGE-TARGET-CONFIG-FAILURE` before root fallback and writes
+nothing; unrelated names such as `gentle-pi-helper` are not classified as this package.
+The overlay parses settings with `jq` when available, otherwise with Node (provided by Pi),
+and sends both parser outputs through the same classifier. If settings exists but neither
+parser is available, or settings is invalid JSON, it fails closed with
+`PACKAGE-TARGET-CONFIG-FAILURE`; it never silently ignores an uninspectable configuration.
+Only an absent settings file, or successfully parsed settings without a `gentle-pi` source,
+permits unique-root fallback. If both layouts exist without one unambiguous configured source
+or sources conflict, it reports `PACKAGE-TARGET-CONFIG-FAILURE` and writes nothing. A configured
+source always wins over a stale alternate layout; if its selected workflow is missing or unsafe,
+the overlay reports that target instead of falling back. Neither mapping reads or modifies
+`APPEND_SYSTEM.md`. The package workflow is replaced by `gentle-pi`/package updates, so
+run `./apply.sh --check` and reapply after each one.
 
 ### 6. OpenCode Engram injection — idempotent fallback
 
@@ -232,18 +256,14 @@ rewrites only the `experimental.chat.system.transform` prefix so it checks for t
 managed marker or protocol heading before appending `MEMORY_INSTRUCTIONS`; the
 dynamic save nudge and the rest of the plugin remain installer-managed.
 
-Pi's concrete proposal phase is named `sdd-proposal`. The Pi model-assignment
-transform normalizes stale `sdd-propose` references in `APPEND_SYSTEM.md` to that
-real agent identifier while preserving host-owned model routing.
-
 ## Host -> file -> shape map
 
 | Host | File | Persona | RUBRIC TDD |
 | --- | --- | --- | --- |
 | `claude-code` | `~/.claude/CLAUDE.md`, selected `~/.claude/output-styles/{neutral,gentleman}.md` | split shape — Rules + Expertise are heading-bounded; the selected native style is replaced wholesale | — |
 | `claude-code` | `~/.claude/skills/_shared/sdd-orchestrator-workflow.md` | — | **prose** — this surface has no numbered list |
-| `pi` | `~/.pi/agent/APPEND_SYSTEM.md` | marker block | item 4 (same file) |
-| `pi` | `~/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md` | executable `sdd-init` asset | — |
+| `pi` | `~/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md` | executable `sdd-init` asset | —; the SDD-init rubric producer contract is marker-delimited |
+| `pi` | settings-selected gentle-pi workflow: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md` | — | marker-delimited project-rubric forwarding after the binary Strict TDD contract; ambiguous package roots fail closed |
 | `opencode` | `~/.config/opencode/AGENTS.md` | marker block | — |
 | `opencode` | `~/.config/opencode/opencode.json` | — | item 4, via `jq` into `.agent["gentle-orchestrator"].prompt` |
 | `opencode` | `~/.config/opencode/skills/sdd-init/SKILL.md`, `~/.config/opencode/skills/sdd-init/references/init-details.md` | managed `sdd-init` skill and reference; the skill is transformed before `## Decision Gates` | — |
@@ -288,30 +308,20 @@ Before writing, `apply.sh` runs a global `--check` preflight. If gentle-ai chang
 template, the matching anchor disappears, preflight reports `ANCHOR-NOT-FOUND` and
 the apply run exits `1` without modifying any host file.
 
-## Model-assignments scope: which hosts are touched, and why
+## Pi `APPEND_SYSTEM.md` boundary (rc.3)
 
-The overlay rewrites the model-assignments block **for `pi` only**. State of every host:
-
-| Host | Model-assignments block | Overlay action |
-| --- | --- | --- |
-| `pi` | Claude aliases, but pi routes via `~/.pi/gentle-ai/models.json` — **contradiction** | **rewritten to `inherit`** |
-| `claude-code` | Claude aliases, rendered from `claude_phase_assignments` in `~/.gentle-ai/state.json` — **correct**, they are real aliases the user chose | untouched |
-| `opencode` | **already host-appropriate**: gentle-ai emits a block deferring to `agent.<phase>.model` in `opencode.json` (which routes to `ollama/*`). No aliases. | untouched |
-| `cursor` | Claude aliases | untouched — reported only |
-| `vscode-copilot` | Claude aliases | untouched — reported only |
-| `antigravity` | Claude aliases | untouched — reported only |
-| `codex` | no block | — |
-
-cursor / vscode-copilot / antigravity carry the same Claude-alias table as pi did. They
-have **no competing model-routing config of their own**, so there is no contradiction of
-pi's kind to resolve — the aliases are simply meaningless on a non-Claude host. Left
-alone deliberately; revisit only if those hosts gain their own routing.
+`~/.pi/agent/APPEND_SYSTEM.md` is entirely outside this overlay's ownership boundary.
+The rc.3 host map has no Pi row for that path, and the overlay contains no Pi model,
+persona, rubric, or proposal-name transform **on APPEND**. A hermetic regression fixture
+using the complete installer-managed CodeGraph and routing blocks verifies that APPEND
+remains byte-identical across both `--check` and apply runs. Pi's separate `sdd-init`
+phase-agent mapping and package lazy-workflow rubric block remain intentionally owned.
 
 ## Deliberately NOT in this overlay
 
-- **The SDD model-assignments table** in hosts other than `pi` — see the scope table
-  above. For `claude-code` it is rendered from `claude_phase_assignments` in
-  `~/.gentle-ai/state.json` and is correct; edit it through gentle-ai, not here.
+- **`~/.pi/agent/APPEND_SYSTEM.md`** — rc.3 deliberately does not target any region
+  of this Pi/Gentle AI-managed file. Edit or regenerate it through its owner, not this
+  overlay.
 - **The CodeGraph guidance block** (`<!-- gentle-ai:codegraph-guidance -->`) is
   emitted by the `codegraph` community-tool component. Also installer-managed.
 
@@ -319,8 +329,8 @@ alone deliberately; revisit only if those hosts gain their own routing.
 
 - `~/.pi/agent/gentle-ai/managed-assets.json` tracks a sha256 per managed asset, but
   **`APPEND_SYSTEM.md` is not among them** (only `chains/*.chain.md` and
-  `gentle-ai/support/*.md` are). Rewriting it therefore does not create hash drift,
-  and `gentle-ai doctor` has no checksum to complain about for that file.
+  `gentle-ai/support/*.md` are). rc.3 does not read or rewrite it, so the overlay cannot
+  create hash drift for that file.
 - Rewriting `opencode.json` through `jq` reformats the document (jq's canonical
   2-space form). The content is semantically identical and validated with
   `jq empty` before installation; gentle-ai regenerates the file wholesale on the
