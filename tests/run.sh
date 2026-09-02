@@ -225,6 +225,32 @@ EOF
   cmp -s "$transformed" "$loose_expected" || fail 'legacy loose paragraph was not migrated' || exit 1
 )
 
+test_runtime_specific_recovery_actions() (
+  local home="$TMP_ROOT/recovery-actions-home" backups="$TMP_ROOT/recovery-actions-backups" list prose workflow output
+  list="$home/list.md"
+  prose="$home/prose.md"
+  workflow="$home/workflow.md"
+  output="$TMP_ROOT/recovery-actions-output.md"
+  mkdir -p "$home"
+
+  load_overlay "$home" "$backups"
+  printf '%s\n' "$ANCHOR_ITEM3" > "$list"
+  rubric_transform_list < "$list" > "$output" || fail 'list recovery transform refused its anchor' || exit 1
+  grep -Fqx '   state MUST block apply/verify with `RubricConsumerBlockedV1` and `recovery_action=run /sdd-init recovery`; never fall back to rubric `default` or binary `strict_tdd`. Binary `strict_tdd` is permitted only when no rubric state has ever' "$output" || fail 'list/OpenCode recovery action is not /sdd-init' || exit 1
+  grep -Fq 'recovery_action=run /gentle-sdd-init recovery' "$output" && fail 'list/OpenCode recovery action used the Claude/Pi command' && exit 1
+
+  printf '%s\n' "$ANCHOR_PROSE" > "$prose"
+  rubric_transform_prose < "$prose" > "$output" || fail 'Claude prose recovery transform refused its anchor' || exit 1
+  grep -Fq 'recovery_action=run /gentle-sdd-init recovery' "$output" || fail 'Claude prose recovery action is not /gentle-sdd-init' || exit 1
+  grep -Fq 'recovery_action=run /sdd-init recovery' "$output" && fail 'Claude prose recovery action used the list/OpenCode command' && exit 1
+
+  write_pi_workflow_220_fixture > "$workflow"
+  pi_rubric_workflow_transform < "$workflow" > "$output" || fail 'Pi recovery transform refused its workflow fixture' || exit 1
+  grep -Fq 'recovery_action=run /gentle-sdd-init recovery' "$output" || fail 'Pi workflow recovery action is not /gentle-sdd-init' || exit 1
+  grep -Fq 'recovery_action=run /sdd-init recovery' "$output" && fail 'Pi workflow recovery action used the list/OpenCode command' && exit 1
+  :
+)
+
 test_rubric_list_refuses_ambiguous_headings() (
   local home="$TMP_ROOT/rubric-refusal-home" backups="$TMP_ROOT/rubric-refusal-backups" duplicate out_of_order after_item5 blank_separated prose_intervening before output
   duplicate="$home/.pi/agent/APPEND_SYSTEM.md"
@@ -457,6 +483,37 @@ test_pi_both_layouts_npm_configured() (
   [ "$workflow" = "$PI_NPM_WORKFLOW_REL" ] || fail 'configured npm source did not beat stale git workflow' || exit 1
   [ "$init" = "$PI_NPM_INIT_REL" ] || fail 'configured npm source did not beat stale git sdd-init' || exit 1
   [ "${workflow%/assets/sdd-orchestrator-workflow.md}" = "${init%/assets/agents/sdd-init.md}" ] || fail 'configured npm Pi assets did not share one package root' || exit 1
+)
+
+test_pi_final_230_npm_dual_assets() (
+  local home="$TMP_ROOT/pi-final-230-home" backups="$TMP_ROOT/pi-final-230-backups" output rc
+  local npm_workflow npm_init git_workflow git_init git_workflow_before git_init_before
+  npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
+  npm_init="$home/$PI_NPM_INIT_REL"
+  git_workflow="$home/$PI_GIT_WORKFLOW_REL"
+  git_init="$home/$PI_GIT_INIT_REL"
+  git_workflow_before="$TMP_ROOT/pi-final-230-git-workflow-before.md"
+  git_init_before="$TMP_ROOT/pi-final-230-git-init-before.md"
+  output="$TMP_ROOT/pi-final-230-output.txt"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$npm_workflow"
+  write_pi_workflow_at "$git_workflow"
+  write_pi_init_at "$git_init"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.3.0"]}'
+  cp -- "$git_workflow" "$git_workflow_before"
+  cp -- "$git_init" "$git_init_before"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
+  rc=$?
+  [ "$rc" -eq 2 ] || fail "final gentle-pi 2.3.0 npm dual-asset check returned $rc" || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
+  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$npm_workflow" || fail 'final gentle-pi 2.3.0 npm workflow was not transformed' || exit 1
+  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$npm_init" || fail 'final gentle-pi 2.3.0 npm sdd-init asset was not transformed' || exit 1
+  cmp -s "$git_workflow" "$git_workflow_before" || fail 'final gentle-pi 2.3.0 npm selection changed stale git workflow' || exit 1
+  cmp -s "$git_init" "$git_init_before" || fail 'final gentle-pi 2.3.0 npm selection changed stale git sdd-init asset' || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "final gentle-pi 2.3.0 npm dual assets were not clean after apply: $rc" || exit 1
 )
 
 test_pi_both_layouts_without_jq_fails_before_writes() (
@@ -1319,20 +1376,59 @@ test_opencode_sdd_init_inline_delegation_validation() (
   write_opencode_init_config "$config"
 
   load_overlay "$home" "$backups"
-  opencode_sdd_init_delegates "$config" || fail 'OpenCode inline sdd-init prompt did not delegate to the managed skill' || exit 1
-  jq -n '{agent: {"sdd-init": {hidden: false, prompt: "Delegate to ~/.config/opencode/skills/sdd-init/SKILL.md."}}}' > "$config"
-  opencode_sdd_init_delegates "$config" && fail 'OpenCode visible sdd-init prompt passed hidden-agent validation' && exit 1
-  jq -n '{agent: {"sdd-init": {hidden: true, prompt: "Do not read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md."}}}' > "$config"
-  opencode_sdd_init_delegates "$config" && fail 'OpenCode refusal prompt passed delegation validation' && exit 1
-  jq -n '{agent: {"sdd-init": {prompt: "Delegate to another skill."}}}' > "$config"
-  opencode_sdd_init_delegates "$config" && fail 'OpenCode redirected sdd-init prompt passed reachability validation' && exit 1
-  jq -n '{agent: {}}' > "$config"
-  opencode_sdd_init_delegates "$config" && fail 'OpenCode missing sdd-init prompt passed reachability validation' && exit 1
-  jq -n '{agent: {"sdd-init": {hidden: true, prompt: "{file:./prompts/sdd/sdd-init.md}"}}}' > "$config"
+  [ "$(opencode_sdd_init_mode "$config")" = inline ] || fail 'OpenCode rc.3 inline sdd-init prompt was not recognized' || exit 1
+  opencode_sdd_init_delegates "$config" || fail 'OpenCode rc.3 inline sdd-init prompt did not delegate to the managed skill' || exit 1
+  write_opencode_sdd_init_prompt "$config" '{file:./prompts/sdd/sdd-init.md}'
   [ "$(opencode_sdd_init_mode "$config")" = external ] || fail 'OpenCode exact external prompt was not recognized' || exit 1
   [ "$(opencode_sdd_init_external_target "$config")" = "$home/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'OpenCode external prompt did not map to its fixed target' || exit 1
-  jq -n '{agent: {"sdd-init": {hidden: true, prompt: "{file:./prompts/sdd/other.md}"}}}' > "$config"
+  write_opencode_sdd_init_prompt "$config" '{file:./prompts/sdd/other.md}'
   opencode_sdd_init_mode "$config" >/dev/null 2>&1 && fail 'OpenCode arbitrary external prompt passed validation' && exit 1
+  :
+)
+
+test_opencode_sdd_init_final_contract_validation() (
+  local home="$TMP_ROOT/opencode-init-final-home" backups="$TMP_ROOT/opencode-init-final-backups" config prompt label
+  config="$home/.config/opencode/opencode.json"
+  mkdir -p "$(dirname -- "$config")"
+  write_opencode_final_init_config "$config"
+
+  load_overlay "$home" "$backups"
+  [ "$(opencode_sdd_init_mode "$config")" = inline ] || fail 'OpenCode final 2.5.0 appended prompt was not recognized' || exit 1
+  opencode_sdd_init_delegates "$config" || fail 'OpenCode final 2.5.0 prompt did not delegate to the managed skill' || exit 1
+  write_opencode_sdd_init_prompt "$config" "$OPENCODE_SDD_INIT_FINAL_PARAGRAPH"
+  [ "$(opencode_sdd_init_mode "$config")" = inline ] || fail 'OpenCode final 2.5.0 zero-block prompt was not recognized' || exit 1
+  opencode_sdd_init_delegates "$config" || fail 'OpenCode final 2.5.0 zero-block prompt did not delegate to the managed skill' || exit 1
+  prompt="$(opencode_sdd_init_final_prompt)"$'\n'
+  [ "$(write_opencode_sdd_init_prompt "$config" "$prompt"; opencode_sdd_init_mode "$config")" = inline ] || fail 'OpenCode final prompt with its single canonical terminal newline was refused' || exit 1
+
+  for label in arbitrary-prefix embedded-sentence arbitrary-suffix partial-marker duplicate-marker out-of-order-marker unknown-marker invented-artifact-language-marker visible wrong-skill-path redirected refusal; do
+    case "$label" in
+      arbitrary-prefix) prompt=$'Unrelated prefix.\n'"$(opencode_sdd_init_final_prompt)" ;;
+      embedded-sentence) prompt="Unrelated text. $OPENCODE_SDD_INIT_RC3_PROMPT Still unrelated text." ;;
+      arbitrary-suffix) prompt="$(opencode_sdd_init_final_prompt)"$'\nUnexpected suffix.' ;;
+      partial-marker) prompt="$OPENCODE_SDD_INIT_FINAL_PARAGRAPH"$'\n\n<!-- gentle-ai:codegraph-guidance -->\npartial CodeGraph block' ;;
+      duplicate-marker) prompt="$OPENCODE_SDD_INIT_FINAL_PARAGRAPH"$'\n\n'"$OPENCODE_SDD_INIT_CODEGRAPH_BLOCK"$'\n\n'"$OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK"$'\n\n'"$OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK" ;;
+      out-of-order-marker) prompt="$OPENCODE_SDD_INIT_FINAL_PARAGRAPH"$'\n\n'"$OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK"$'\n\n'"$OPENCODE_SDD_INIT_CODEGRAPH_BLOCK" ;;
+      unknown-marker) prompt="$OPENCODE_SDD_INIT_FINAL_PARAGRAPH"$'\n\n'"$OPENCODE_SDD_INIT_CODEGRAPH_BLOCK"$'\n\n<!-- gentle-ai:unknown -->\nunknown managed block\n<!-- /gentle-ai:unknown -->\n\n'"$OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK" ;;
+      invented-artifact-language-marker) prompt="$OPENCODE_SDD_INIT_FINAL_PARAGRAPH"$'\n\n'"$OPENCODE_SDD_INIT_CODEGRAPH_BLOCK"$'\n\n<!-- gentle-ai:agent-language-contract -->\n## Agent Language Contract\n\n<!-- gentle-ai:artifact-language -->\ninvented managed block\n<!-- /gentle-ai:artifact-language -->\n\nInstaller-managed Agent Language Contract guidance.\n<!-- /gentle-ai:agent-language-contract -->' ;;
+      visible) prompt="$(opencode_sdd_init_final_prompt)" ;;
+      wrong-skill-path) prompt="${OPENCODE_SDD_INIT_FINAL_PARAGRAPH/SKILL.md/OTHER.md}"$'\n\n'"$OPENCODE_SDD_INIT_CODEGRAPH_BLOCK"$'\n\n'"$OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK" ;;
+      redirected) prompt='Delegate to another skill.' ;;
+      refusal) prompt='Do not read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md.' ;;
+    esac
+    if [ "$label" = visible ]; then
+      write_opencode_sdd_init_prompt "$config" "$prompt" false
+    else
+      write_opencode_sdd_init_prompt "$config" "$prompt"
+    fi
+    if opencode_sdd_init_mode "$config" >/dev/null 2>&1; then
+      case "$label" in
+        invented-artifact-language-marker) fail 'OpenCode invented artifact-language marker was not rejected as unknown' ;;
+        *) fail "OpenCode $label prompt passed final-contract validation" ;;
+      esac
+      exit 1
+    fi
+  done
   :
 )
 
@@ -1436,13 +1532,42 @@ Only for a selected SDD route, delegate to these phase agents: sdd-init, sdd-exp
 EOF
 }
 
+OPENCODE_SDD_INIT_RC3_PROMPT='Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly.'
+OPENCODE_SDD_INIT_FINAL_PARAGRAPH="You are an SDD executor for the init phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly."
+OPENCODE_SDD_INIT_CODEGRAPH_BLOCK=$'<!-- gentle-ai:codegraph-guidance -->\n## CodeGraph\n\nInstaller-managed CodeGraph guidance.\n<!-- /gentle-ai:codegraph-guidance -->'
+OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK=$'<!-- gentle-ai:agent-language-contract -->\n## Agent Language Contract\n\nInstaller-managed Agent Language Contract guidance.\n<!-- /gentle-ai:agent-language-contract -->'
+
+opencode_sdd_init_final_prompt() {
+  printf '%s\n\n%s\n\n%s' \
+    "$OPENCODE_SDD_INIT_FINAL_PARAGRAPH" \
+    "$OPENCODE_SDD_INIT_CODEGRAPH_BLOCK" \
+    "$OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK"
+}
+
+write_opencode_sdd_init_prompt() {
+  local file="$1" prompt="$2" hidden="${3:-true}"
+  jq -n --arg prompt "$prompt" --argjson hidden "$hidden" '{agent: {"sdd-init": {hidden: $hidden, prompt: $prompt}}}' > "$file"
+}
+
 write_opencode_init_config() {
   local file="$1" orchestrator
   orchestrator=$'3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction\n\nThe orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.'
-  jq -n --arg orchestrator "$orchestrator" '
+  jq -n --arg orchestrator "$orchestrator" --arg prompt "$OPENCODE_SDD_INIT_RC3_PROMPT" '
     {agent: {
       "gentle-orchestrator": {prompt: $orchestrator},
-      "sdd-init": {hidden: true, prompt: "Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly."}
+      "sdd-init": {hidden: true, prompt: $prompt}
+    }}
+  ' > "$file"
+}
+
+write_opencode_final_init_config() {
+  local file="$1" orchestrator prompt
+  orchestrator=$'3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction\n\nThe orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.'
+  prompt="${2:-$(opencode_sdd_init_final_prompt)}"
+  jq -n --arg orchestrator "$orchestrator" --arg prompt "$prompt" '
+    {agent: {
+      "gentle-orchestrator": {prompt: $orchestrator},
+      "sdd-init": {hidden: true, prompt: $prompt}
     }}
   ' > "$file"
 }
@@ -1517,9 +1642,9 @@ test_neutral_external_profile_lifecycle() (
 )
 
 # This fixture mirrors the active Claude, Pi, and OpenCode assets emitted by a
-# fresh Gentle AI 2.2.4 install. It must not create legacy compatibility paths.
-test_fresh_224_active_layout_lifecycle() (
-  local home="$TMP_ROOT/fresh-224-home" backups="$TMP_ROOT/fresh-224-backups" output rc config_before
+# fresh Gentle AI 2.5.0 install. It must not create legacy compatibility paths.
+test_fresh_250_active_layout_lifecycle() (
+  local home="$TMP_ROOT/fresh-250-home" backups="$TMP_ROOT/fresh-250-backups" output rc config_before
   local claude="$home/.claude/CLAUDE.md" gentleman="$home/.claude/output-styles/gentleman.md"
   local pi="$home/.pi/agent/APPEND_SYSTEM.md" pi_init="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
   local pi_workflow="$home/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md"
@@ -1547,34 +1672,35 @@ test_fresh_224_active_layout_lifecycle() (
     cat "$ROOT/persona/persona-block.md"
     printf '%s\n' '<!-- /gentle-ai:persona -->'
   } > "$home/.config/opencode/AGENTS.md"
-  write_opencode_init_config "$config"
+  write_opencode_final_init_config "$config" "$OPENCODE_SDD_INIT_FINAL_PARAGRAPH"
   write_opencode_stock > "$home/.config/opencode/plugins/engram.ts"
   write_init_skill_stock > "$opencode_skill"
   write_init_details_stock > "$home/.config/opencode/skills/sdd-init/references/init-details.md"
 
-  output="$TMP_ROOT/fresh-224-check-before.txt"
+  output="$TMP_ROOT/fresh-250-check-before.txt"
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check > "$output"
   rc=$?
-  [ "$rc" -eq 2 ] || { cat "$output" >&2; fail "fresh 2.2.4 layout should be pending, got rc $rc"; exit 1; }
-  [ ! -e "$backups/.claude/output-styles/gentleman.md" ] || fail 'fresh 2.2.4 --check created a Claude backup' || exit 1
+  [ "$rc" -eq 2 ] || { cat "$output" >&2; fail "fresh 2.5.0 layout should be pending, got rc $rc"; exit 1; }
+  [ ! -e "$backups/.claude/output-styles/gentleman.md" ] || fail 'fresh 2.5.0 --check created a Claude backup' || exit 1
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
-  grep -Fq '# Neutral Output Style' "$gentleman" || fail 'fresh 2.2.4 Claude style was not transformed' || exit 1
-  grep -Fq 'allowed_answers: strict|rubric' "$pi_init" || fail 'fresh 2.2.4 Pi executable asset was not transformed' || exit 1
-  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$pi_workflow" || fail 'fresh 2.2.4 Pi package workflow was not transformed' || exit 1
-  grep -Fq 'single writer of project TDD policy' "$opencode_skill" || fail 'fresh 2.2.4 OpenCode skill was not transformed' || exit 1
-  [ ! -e "$home/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'fresh 2.2.4 layout manufactured an OpenCode prompt file' || exit 1
-  jq -e '.agent["sdd-init"].prompt | contains("~/.config/opencode/skills/sdd-init/SKILL.md")' "$config" >/dev/null || fail 'fresh 2.2.4 OpenCode sdd-init prompt does not delegate to its skill' || exit 1
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
+  grep -Fq '# Neutral Output Style' "$gentleman" || fail 'fresh 2.5.0 Claude style was not transformed' || exit 1
+  grep -Fq 'allowed_answers: strict|rubric' "$pi_init" || fail 'fresh 2.5.0 Pi executable asset was not transformed' || exit 1
+  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$pi_workflow" || fail 'fresh 2.5.0 Pi package workflow was not transformed' || exit 1
+  grep -Fq 'single writer of project TDD policy' "$opencode_skill" || fail 'fresh 2.5.0 OpenCode skill was not transformed' || exit 1
+  [ ! -e "$home/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'fresh 2.5.0 layout manufactured an OpenCode prompt file' || exit 1
+  load_overlay "$home" "$backups"
+  [ "$(opencode_sdd_init_mode "$config")" = inline ] || fail 'fresh 2.5.0 zero-block OpenCode sdd-init prompt does not use the final inline contract' || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check >/dev/null
   rc=$?
-  [ "$rc" -eq 0 ] || fail "fresh 2.2.4 layout should be clean after apply, got rc $rc" || exit 1
+  [ "$rc" -eq 0 ] || fail "fresh 2.5.0 layout should be clean after apply, got rc $rc" || exit 1
 
-  config_before="$TMP_ROOT/fresh-224-opencode-config-before.json"
+  config_before="$TMP_ROOT/fresh-250-opencode-config-before.json"
   cp -- "$config" "$config_before"
   jq '.agent["sdd-init"].prompt = "Do not read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md."' "$config" > "$config_before.next"
   mv -- "$config_before.next" "$config"
   printf '%s\n' 'pending Claude style must survive failed preflight' > "$gentleman"
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" >/dev/null
   rc=$?
   [ "$rc" -eq 1 ] || fail "refused OpenCode sdd-init prompt should block apply, got rc $rc" || exit 1
   grep -Fqx 'pending Claude style must survive failed preflight' "$gentleman" || fail 'refused OpenCode prompt allowed a preflight write' || exit 1
@@ -1582,7 +1708,7 @@ test_fresh_224_active_layout_lifecycle() (
   jq '.agent["sdd-init"].prompt = "{file:./prompts/sdd/sdd-init.md}"' "$config_before" > "$config_before.next"
   mv -- "$config_before.next" "$config"
   printf '%s\n' 'pending Claude style must survive missing external prompt' > "$gentleman"
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" >/dev/null
   rc=$?
   [ "$rc" -eq 1 ] || fail "missing external prompt should block apply, got rc $rc" || exit 1
   grep -Fqx 'pending Claude style must survive missing external prompt' "$gentleman" || fail 'missing external prompt allowed a preflight write' || exit 1
@@ -1590,7 +1716,7 @@ test_fresh_224_active_layout_lifecycle() (
   jq '.agent["sdd-init"].prompt = "{file:./prompts/sdd/other.md}"' "$config_before" > "$config_before.next"
   mv -- "$config_before.next" "$config"
   printf '%s\n' 'pending Claude style must survive arbitrary external prompt' > "$gentleman"
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" >/dev/null
   rc=$?
   [ "$rc" -eq 1 ] || fail "arbitrary external prompt should block apply, got rc $rc" || exit 1
   grep -Fqx 'pending Claude style must survive arbitrary external prompt' "$gentleman" || fail 'arbitrary external prompt allowed a preflight write' || exit 1
@@ -1601,7 +1727,7 @@ test_fresh_224_active_layout_lifecycle() (
   jq '.agent["sdd-init"].prompt = "{file:./prompts/sdd/sdd-init.md}"' "$config_before" > "$config_before.next"
   mv -- "$config_before.next" "$config"
   printf '%s\n' 'pending Claude style must survive unsafe external prompt' > "$gentleman"
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" >/dev/null
   rc=$?
   [ "$rc" -eq 1 ] || fail "unsafe external prompt should block apply, got rc $rc" || exit 1
   grep -Fqx 'pending Claude style must survive unsafe external prompt' "$gentleman" || fail 'unsafe external prompt allowed a preflight write' || exit 1
@@ -1609,7 +1735,7 @@ test_fresh_224_active_layout_lifecycle() (
   cp -- "$config_before" "$config"
   rm -f -- "$home/.config/opencode/prompts/sdd/sdd-init.md"
   rm -f -- "$pi_init"
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check >/dev/null
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check >/dev/null
   rc=$?
   [ "$rc" -eq 1 ] || fail "missing Pi executable asset should block preflight, got rc $rc" || exit 1
 )
@@ -1773,11 +1899,13 @@ run test_claude_duplicate_markers
 run test_opencode_stock_and_guarded_noop
 run test_opencode_refuses_custom_body
 run test_rubric_list_replaces_legacy_item4
+run test_runtime_specific_recovery_actions
 run test_rubric_list_refuses_ambiguous_headings
 run test_pi_git_only_layout
 run test_pi_npm_only_layout
 run test_pi_both_layouts_git_configured
 run test_pi_both_layouts_npm_configured
+run test_pi_final_230_npm_dual_assets
 run test_pi_both_layouts_without_jq_fails_before_writes
 run test_pi_no_jq_node_unsupported_exact_source_fails_before_writes
 run test_pi_no_jq_node_canonical_source_selects_configured_root
@@ -1808,6 +1936,7 @@ run test_sdd_init_host_rows_cover_cursor_copilot_and_pi
 run test_antigravity_skill_root_resolution
 run test_claude_style_resolution_refuses_ambiguity
 run test_opencode_sdd_init_inline_delegation_validation
+run test_opencode_sdd_init_final_contract_validation
 run test_init_rubric_source_shape_refusal
 run test_init_rubric_refuses_anchor_inside_managed_section
 run test_init_rubric_shared_skill_idempotence_and_backup
@@ -1815,7 +1944,7 @@ run test_init_rubric_reference_and_pi_idempotence
 run test_init_rubric_replaces_complete_section
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
 run test_neutral_external_profile_lifecycle
-run test_fresh_224_active_layout_lifecycle
+run test_fresh_250_active_layout_lifecycle
 
 bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 bash "$ROOT/tests/rubric-compiler-core.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))

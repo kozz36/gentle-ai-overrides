@@ -130,6 +130,50 @@ validate_rubric_tdd_shape() {
   ' "$1"
 }
 
+extract_rubric_tdd_shape() {
+  local shape="$1" out="$2"
+  awk -v shape="$shape" '
+    $0 == "<!-- shape:" shape " -->" { inside = 1; next }
+    $0 == "<!-- /shape:" shape " -->" { inside = 0; exit }
+    inside { print }
+  ' "$ROOT/deltas/rubric-tdd.md" > "$out"
+  [ -s "$out" ] || fail "missing rubric TDD $shape contract"
+}
+
+test_runtime_specific_recovery_contract() (
+  local list="$TMP_ROOT/recovery-list.md" prose="$TMP_ROOT/recovery-prose.md" pi="$TMP_ROOT/recovery-pi.md"
+  extract_rubric_tdd_shape list-item "$list" || exit 1
+  extract_rubric_tdd_shape prose "$prose" || exit 1
+  extract_rubric_tdd_shape pi-workflow "$pi" || exit 1
+
+  [ "$(grep -Fxc '   state MUST block apply/verify with `RubricConsumerBlockedV1` and `recovery_action=run /sdd-init recovery`; never fall back to rubric `default` or binary `strict_tdd`. Binary `strict_tdd` is permitted only when no rubric state has ever' "$list")" -eq 1 ] || fail 'list/OpenCode recovery action is not exactly /sdd-init' || exit 1
+  grep -Fq 'recovery_action=run /gentle-sdd-init recovery' "$list" && fail 'list/OpenCode recovery action includes the Claude/Pi command' && exit 1
+  [ "$(grep -Foc 'recovery_action=run /gentle-sdd-init recovery' "$prose")" -eq 1 ] || fail 'Claude prose recovery action is not exactly /gentle-sdd-init' || exit 1
+  grep -Fq 'recovery_action=run /sdd-init recovery' "$prose" && fail 'Claude prose recovery action includes the list/OpenCode command' && exit 1
+  [ "$(grep -Foc 'recovery_action=run /gentle-sdd-init recovery' "$pi")" -eq 1 ] || fail 'Pi workflow recovery action is not exactly /gentle-sdd-init' || exit 1
+  grep -Fq 'recovery_action=run /sdd-init recovery' "$pi" && fail 'Pi workflow recovery action includes the list/OpenCode command' && exit 1
+  :
+)
+
+test_opencode_final_sdd_init_contract() (
+  local apply="$ROOT/apply.sh"
+  for invariant in \
+    "OpenCode supports exactly three hidden sdd-init shapes: the final 2.5.0" \
+    "You are an SDD executor for the init phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly." \
+    "<!-- gentle-ai:codegraph-guidance -->" \
+    "<!-- /gentle-ai:codegraph-guidance -->" \
+    "<!-- gentle-ai:agent-language-contract -->" \
+    "<!-- /gentle-ai:agent-language-contract -->" \
+    'and $codegraph_opens == [2]' \
+    'and $language_contract_opens == [($codegraph_close_line + 2)]' \
+    'and ($unknown_markers | length == 0)' \
+    'elif $agent.prompt == $rc3_inline then "inline"' \
+    'elif $agent.prompt == $external then "external"'; do
+    grep -Fq "$invariant" "$apply" || fail "OpenCode final sdd-init contract lacks invariant: $invariant" || exit 1
+  done
+  ! grep -Fq 'gentle-ai:artifact-language' "$apply" || fail 'OpenCode final sdd-init contract allowlists the invented artifact-language marker' || exit 1
+)
+
 test_pi_workflow_consumer_contract() (
   local consumer="$ROOT/deltas/rubric-tdd.md" apply="$ROOT/apply.sh"
   validate_rubric_tdd_shape "$consumer" || fail 'rubric TDD delta has invalid shape markers' || exit 1
@@ -216,6 +260,8 @@ run() {
 }
 
 run test_policy_contract
+run test_runtime_specific_recovery_contract
+run test_opencode_final_sdd_init_contract
 run test_pi_workflow_consumer_contract
 run test_delta_shape_grammar
 run test_deterministic_fallback_contract
