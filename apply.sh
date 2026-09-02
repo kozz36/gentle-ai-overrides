@@ -935,20 +935,62 @@ opencode_engram_apply() {
   return "$rc"
 }
 
-# OpenCode 2.2.4 has two native hidden sdd-init shapes. The inline imperative
-# executes the managed skill; the exact external reference executes its prompt
-# file directly. Nothing else is a supported executable surface.
+# OpenCode supports exactly three hidden sdd-init shapes: the final 2.5.0
+# executor prompt, the rc.3 one-sentence inline prompt, and the old exact
+# external reference. The final prompt accepts either no appended blocks or one
+# complete, ordered CodeGraph/agent-language-contract pair; their bodies remain
+# installer-owned. Nothing else is a supported executable surface.
 opencode_sdd_init_mode() {
   local file="$1"
+  local rc3_inline='Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly.'
+  local final_paragraph="You are an SDD executor for the init phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly."
+  local external='{file:./prompts/sdd/sdd-init.md}'
+  local codegraph_open='<!-- gentle-ai:codegraph-guidance -->'
+  local codegraph_close='<!-- /gentle-ai:codegraph-guidance -->'
+  local language_contract_open='<!-- gentle-ai:agent-language-contract -->'
+  local language_contract_close='<!-- /gentle-ai:agent-language-contract -->'
+
   command -v jq >/dev/null 2>&1 || return 1
-  jq -er '
-    .agent["sdd-init"] as $agent
-    | if ($agent | type) != "object" or $agent.hidden != true or ($agent.prompt | type) != "string" then error("invalid hidden sdd-init agent")
-      elif ($agent.prompt | test("(^|[.!?][[:space:]]+)Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL\\.md and follow it exactly\\.[[:space:]]*$")) then "inline"
-      elif $agent.prompt == "{file:./prompts/sdd/sdd-init.md}" then "external"
-      else error("unsupported sdd-init prompt")
-      end
-  ' "$file" 2>/dev/null
+  jq -er --arg rc3_inline "$rc3_inline" --arg final_paragraph "$final_paragraph" --arg external "$external" \
+    --arg codegraph_open "$codegraph_open" --arg codegraph_close "$codegraph_close" \
+    --arg language_contract_open "$language_contract_open" --arg language_contract_close "$language_contract_close" '
+      def final_inline:
+        . as $raw_prompt
+        | ($raw_prompt | if endswith("\n") then rtrimstr("\n") else . end) as $prompt
+        | ($prompt | split("\n")) as $lines
+        | [$lines | to_entries[] | select(.value == $codegraph_open) | .key] as $codegraph_opens
+        | [$lines | to_entries[] | select(.value == $codegraph_close) | .key] as $codegraph_closes
+        | [$lines | to_entries[] | select(.value == $language_contract_open) | .key] as $language_contract_opens
+        | [$lines | to_entries[] | select(.value == $language_contract_close) | .key] as $language_contract_closes
+        | ($codegraph_opens[0] // -1) as $codegraph_open_line
+        | ($codegraph_closes[0] // -1) as $codegraph_close_line
+        | ($language_contract_opens[0] // -1) as $language_contract_open_line
+        | ($language_contract_closes[0] // -1) as $language_contract_close_line
+        | [$lines[] | select(contains("gentle-ai:")) | select(. != $codegraph_open and . != $codegraph_close and . != $language_contract_open and . != $language_contract_close)] as $unknown_markers
+        | ($lines | length) as $line_count
+        | ($raw_prompt == $prompt or $raw_prompt == ($prompt + "\n"))
+          and (
+            ($lines == [$final_paragraph])
+            or (
+              $lines[0] == $final_paragraph
+              and $lines[1] == ""
+              and $codegraph_opens == [2]
+              and $codegraph_close_line > ($codegraph_open_line + 1)
+              and $language_contract_opens == [($codegraph_close_line + 2)]
+              and $language_contract_close_line > ($language_contract_open_line + 1)
+              and $language_contract_closes == [($line_count - 1)]
+              and ($unknown_markers | length == 0)
+            )
+          );
+
+      .agent["sdd-init"] as $agent
+      | if ($agent | type) != "object" or $agent.hidden != true or ($agent.prompt | type) != "string" then error("invalid hidden sdd-init agent")
+        elif $agent.prompt == $rc3_inline then "inline"
+        elif $agent.prompt == $external then "external"
+        elif ($agent.prompt | final_inline) then "inline"
+        else error("unsupported sdd-init prompt")
+        end
+    ' "$file" 2>/dev/null
 }
 
 opencode_sdd_init_delegates() {

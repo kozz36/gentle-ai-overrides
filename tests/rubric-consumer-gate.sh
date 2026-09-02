@@ -15,7 +15,7 @@ field() { awk -F= -v key="$2" '$1 == key { count++; value = substr($0, length(ke
 safe() { case "$1" in ''|*[!A-Za-z0-9._:-]*) return 1 ;; esac; }
 
 blocked() {
-  printf 'schema=RubricConsumerBlockedV1\nbackend=openspec\nobserved_state=%s\nmismatch=%s\nrecovery_action=run sdd-init recovery\n' "$1" "$2"
+  printf 'schema=RubricConsumerBlockedV1\nbackend=openspec\nobserved_state=%s\nmismatch=%s\nrecovery_action=run /sdd-init recovery\n' "$1" "$2"
   return 1
 }
 
@@ -53,7 +53,7 @@ assert_blocked() {
     fail "$name was consumed" || return 1
   fi
   grep -Fqx 'schema=RubricConsumerBlockedV1' "$output" && grep -Fqx "mismatch=$expected" "$output" && \
-    grep -Fqx 'recovery_action=run sdd-init recovery' "$output" && ! grep -Fq 'model-1' "$output" || fail "$name did not redact a valid blocked envelope"
+    grep -Fqx 'recovery_action=run /sdd-init recovery' "$output" && ! grep -Fq 'model-1' "$output" || fail "$name did not redact a valid blocked envelope"
 }
 
 load_overlay() {
@@ -66,11 +66,17 @@ load_overlay() {
 }
 
 assert_forwarding() {
-  local file="$1" label="$2" content
+  local file="$1" label="$2" recovery_action="$3" unexpected_action content
+  case "$recovery_action" in
+    /gentle-sdd-init) unexpected_action=/sdd-init ;;
+    /sdd-init) unexpected_action=/gentle-sdd-init ;;
+    *) fail "$label has unsupported recovery action: $recovery_action"; return 1 ;;
+  esac
   content="$(tr '\n' ' ' < "$file" | tr -s ' ')"
-  for text in RubricConsumerEnvelopeV1 'sole resolution owner' 'without downstream re-classification' RubricConsumerBlockedV1 'recovery_action=run sdd-init recovery'; do
+  for text in RubricConsumerEnvelopeV1 'sole resolution owner' 'without downstream re-classification' RubricConsumerBlockedV1 "recovery_action=run $recovery_action recovery"; do
     printf '%s\n' "$content" | grep -Fq "$text" || fail "$label lacks $text" || return 1
   done
+  ! printf '%s\n' "$content" | grep -Fq "recovery_action=run $unexpected_action recovery" || fail "$label has the wrong recovery action"
 }
 
 test_state_matrix_and_single_owner() (
@@ -99,17 +105,20 @@ test_state_matrix_and_single_owner() (
 )
 
 test_temporary_home_host_goldens() (
-  local prose="$TMP_ROOT/prose" list="$TMP_ROOT/list" json="$TMP_ROOT/opencode.json" host
+  local prose="$TMP_ROOT/prose" list="$TMP_ROOT/list" json="$TMP_ROOT/opencode.json" pi_input="$TMP_ROOT/pi-input" pi_workflow="$TMP_ROOT/pi-workflow" host
   load_overlay
   printf '%s\n' "$ANCHOR_PROSE" > "$TMP_ROOT/prose-input"
   rubric_transform_prose < "$TMP_ROOT/prose-input" > "$prose" || fail 'Claude prose golden did not render' || exit 1
   printf '%s\n' "$ANCHOR_ITEM3" > "$TMP_ROOT/list-input"
   rubric_transform_list < "$TMP_ROOT/list-input" > "$list" || fail 'list golden did not render' || exit 1
+  printf '%s\n\n%s\n\n%s\n' "$PI_WORKFLOW_HEADING" "$PI_WORKFLOW_BINARY" "$PI_WORKFLOW_ARCHIVE" > "$pi_input"
+  pi_rubric_workflow_transform < "$pi_input" > "$pi_workflow" || fail 'Pi workflow golden did not render' || exit 1
   jq -n --arg prompt "$RUBRIC_ITEM4" '{agent: {"gentle-orchestrator": {prompt: $prompt}}}' > "$json"
-  assert_forwarding "$prose" 'Claude lazy prose' || exit 1
-  for host in Pi Cursor 'VS Code Copilot' 'Gemini CLI' Antigravity; do assert_forwarding "$list" "$host list" || exit 1; done
+  assert_forwarding "$prose" 'Claude lazy prose' /gentle-sdd-init || exit 1
+  for host in Cursor 'VS Code Copilot' 'Gemini CLI' Antigravity; do assert_forwarding "$list" "$host list" /sdd-init || exit 1; done
+  assert_forwarding "$pi_workflow" 'Pi workflow' /gentle-sdd-init || exit 1
   jq -r '.agent["gentle-orchestrator"].prompt' "$json" > "$TMP_ROOT/opencode-prompt"
-  assert_forwarding "$TMP_ROOT/opencode-prompt" 'OpenCode JSON' || exit 1
+  assert_forwarding "$TMP_ROOT/opencode-prompt" 'OpenCode JSON' /sdd-init || exit 1
   host_rows | grep -Fqx 'codex|rubric-none|.codex/AGENTS.md' || fail 'Codex is not rubric-none' || exit 1
   host_rows | grep -Fq 'kimi|' && fail 'Kimi must remain unmanaged' && exit 1
   grep -Fq 'Kimi is explicitly current-scope unmanaged' "$ROOT/deltas/rubric-tdd.md" || fail 'Kimi scope is undocumented' || exit 1

@@ -8,8 +8,8 @@ This is an unofficial, community-maintained project. It is not affiliated with,
 endorsed by, or supported by Gentleman Programming. Gentle AI and its original
 prompt assets are licensed separately; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
-Active-surface compatibility was reverified with Gentle AI `2.2.4` on Linux;
-prior `2.2.2` validation covered Linux and macOS.
+Active-surface compatibility was reverified with official Gentle AI `2.5.0` on Linux;
+prior `2.5.0-rc.3` validation remains supported for its legacy OpenCode inline shape.
 
 ## Install
 
@@ -179,25 +179,31 @@ row, strictest-wins matching with unioned obligations, equivalent mode-specific
 persistence, and confirmation-gated re-init drift maintenance. `apply.sh`
 installs it before the exact SDD-init anchors `## Decision Gates`, `## Output
 Templates`, and Pi's `## Memory Contract`, which were reverified unchanged on
-active Gentle AI 2.2.4 surfaces; incomplete or ambiguous managed markers and
+official Gentle AI 2.5.0 surfaces; incomplete or ambiguous managed markers and
 anchors fail closed.
 
-OpenCode accepts exactly two hidden `sdd-init` shapes in strict `opencode.json`:
+OpenCode accepts exactly three hidden `sdd-init` shapes in strict `opencode.json`:
 
 | Native shape | Executable surface | Overlay action |
 | --- | --- | --- |
-| Inline prompt ending `Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly.` | `~/.config/opencode/skills/sdd-init/SKILL.md` | Applies the `skill` rubric overlay to the managed skill; no prompt file is created. |
+| Official 2.5.0 exact executor paragraph — `You are an SDD executor for the init phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly.` — with either zero appended managed blocks or exactly one complete, ordered `gentle-ai:codegraph-guidance` block followed by one complete `gentle-ai:agent-language-contract` block | `~/.config/opencode/skills/sdd-init/SKILL.md` | Applies the `skill` rubric overlay to the managed skill; any appended blocks remain installer-managed and no prompt file is created. |
+| Exact rc.3 inline prompt `Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly.` | `~/.config/opencode/skills/sdd-init/SKILL.md` | Backward-compatible managed-skill overlay; no prompt file is created. |
 | Exact `{file:./prompts/sdd/sdd-init.md}` reference | `~/.config/opencode/prompts/sdd/sdd-init.md` | Applies the same `skill` rubric overlay to that referenced executable prompt. |
 
 The external profile does not delegate to the managed skill. Its referenced
 prompt is the executable phase surface, so it receives the overlay itself.
 Any visible agent, missing file, symlink, arbitrary reference, traversal,
-redirected/refusal text, or unsupported JSON shape fails global preflight
+redirected/refusal text, arbitrary prefix/suffix, embedded sentence, or partial,
+duplicate, unknown, or out-of-order managed marker block fails global preflight
 before a host file is written.
 
-### 5. Pi rc.3 compatibility ownership
+Recovery commands are runtime-specific: Claude prose and the Pi workflow use
+`recovery_action=run /gentle-sdd-init recovery`; numbered-list surfaces, including
+OpenCode JSON, use `recovery_action=run /sdd-init recovery`.
 
-As of rc.3, this overlay owns **no region** of
+### 5. Pi 2.5.0 compatibility ownership
+
+As of official 2.5.0, this overlay owns **no region** of
 `~/.pi/agent/APPEND_SYSTEM.md`: `apply.sh` does not map, read, transform, back up, or
 write it. The ownership split is:
 
@@ -265,7 +271,7 @@ dynamic save nudge and the rest of the plugin remain installer-managed.
 | `opencode` | `~/.config/opencode/AGENTS.md` | marker block | — |
 | `opencode` | `~/.config/opencode/opencode.json` | — | item 4, via `jq` into `.agent["gentle-orchestrator"].prompt` |
 | `opencode` | `~/.config/opencode/skills/sdd-init/SKILL.md`, `~/.config/opencode/skills/sdd-init/references/init-details.md` | managed `sdd-init` skill and reference; the skill is transformed before `## Decision Gates` | — |
-| `opencode` | `~/.config/opencode/opencode.json` | hidden inline skill delegation or the exact external reference; external mode maps `prompts/sdd/sdd-init.md` as the executable skill-shaped target | — |
+| `opencode` | `~/.config/opencode/opencode.json` | official 2.5.0 hidden executor paragraph with zero blocks or the complete ordered CodeGraph/agent-language-contract pair, exact rc.3 inline prompt, or exact external reference; external mode maps `prompts/sdd/sdd-init.md` as the executable skill-shaped target | — |
 | `codex` | `~/.codex/AGENTS.md` | heading-bounded | **n/a** — template has no strict-TDD section |
 | `cursor` | `~/.cursor/rules/gentle-ai.mdc` | heading-bounded | item 4 (same file) |
 | `vscode-copilot` | `~/.config/Code/User/prompts/gentle-ai.instructions.md` | heading-bounded | item 4 (same file) |
@@ -306,10 +312,10 @@ Before writing, `apply.sh` runs a global `--check` preflight. If gentle-ai chang
 template, the matching anchor disappears, preflight reports `ANCHOR-NOT-FOUND` and
 the apply run exits `1` without modifying any host file.
 
-## Pi `APPEND_SYSTEM.md` boundary (rc.3)
+## Pi `APPEND_SYSTEM.md` boundary (2.5.0)
 
 `~/.pi/agent/APPEND_SYSTEM.md` is entirely outside this overlay's ownership boundary.
-The rc.3 host map has no Pi row for that path, and the overlay contains no Pi model,
+The 2.5.0 host map has no Pi row for that path, and the overlay contains no Pi model,
 persona, rubric, or proposal-name transform **on APPEND**. A hermetic regression fixture
 using the complete installer-managed CodeGraph and routing blocks verifies that APPEND
 remains byte-identical across both `--check` and apply runs. Pi's separate `sdd-init`
@@ -317,7 +323,7 @@ phase-agent mapping and package lazy-workflow rubric block remain intentionally 
 
 ## Deliberately NOT in this overlay
 
-- **`~/.pi/agent/APPEND_SYSTEM.md`** — rc.3 deliberately does not target any region
+- **`~/.pi/agent/APPEND_SYSTEM.md`** — official 2.5.0 deliberately does not target any region
   of this Pi/Gentle AI-managed file. Edit or regenerate it through its owner, not this
   overlay.
 - **The CodeGraph guidance block** (`<!-- gentle-ai:codegraph-guidance -->`) is
@@ -327,7 +333,7 @@ phase-agent mapping and package lazy-workflow rubric block remain intentionally 
 
 - `~/.pi/agent/gentle-ai/managed-assets.json` tracks a sha256 per managed asset, but
   **`APPEND_SYSTEM.md` is not among them** (only `chains/*.chain.md` and
-  `gentle-ai/support/*.md` are). rc.3 does not read or rewrite it, so the overlay cannot
+  `gentle-ai/support/*.md` are). Official 2.5.0 does not read or rewrite it, so the overlay cannot
   create hash drift for that file.
 - Rewriting `opencode.json` through `jq` reformats the document (jq's canonical
   2-space form). The content is semantically identical and validated with
