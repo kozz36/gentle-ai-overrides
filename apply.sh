@@ -615,7 +615,7 @@ ANCHOR_ITEM3='3. If the search fails or `strict_tdd` is not found, do NOT add th
 # Anchor: claude-code's condensed prose form, which has no numbered list.
 ANCHOR_PROSE='When launching `sdd-apply` or `sdd-verify`, search for testing capabilities'
 
-# Exact gentle-pi 2.2.0 lazy workflow structure. The binary forwarding contract is
+# Verified gentle-pi@2.4.0 lazy workflow structure. The binary forwarding contract is
 # deliberately not rewritten; the Pi-only marker block is inserted immediately
 # after it and before the following archive section.
 PI_WORKFLOW_HEADING='## Strict TDD Forwarding'
@@ -935,11 +935,11 @@ opencode_engram_apply() {
   return "$rc"
 }
 
-# OpenCode supports exactly three hidden sdd-init shapes: the final 2.5.0
-# executor prompt, the rc.3 one-sentence inline prompt, and the old exact
-# external reference. The final prompt accepts either no appended blocks or one
-# complete, ordered CodeGraph/agent-language-contract pair; their bodies remain
-# installer-owned. Nothing else is a supported executable surface.
+# OpenCode supports exactly four hidden sdd-init shapes: the final 2.6.0
+# executor prompt followed only by agent-language-contract, the final 2.5.0
+# executor prompt with either no blocks or the ordered CodeGraph/agent-language
+# pair, the rc.3 one-sentence inline prompt, and the old exact external reference.
+# Managed block bodies remain installer-owned. Nothing else is executable.
 opencode_sdd_init_mode() {
   local file="$1"
   local rc3_inline='Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly.'
@@ -968,13 +968,24 @@ opencode_sdd_init_mode() {
         | ($language_contract_closes[0] // -1) as $language_contract_close_line
         | [$lines[] | select(contains("gentle-ai:")) | select(. != $codegraph_open and . != $codegraph_close and . != $language_contract_open and . != $language_contract_close)] as $unknown_markers
         | ($lines | length) as $line_count
-        | ($raw_prompt == $prompt or $raw_prompt == ($prompt + "\n"))
+        | ($raw_prompt == $prompt or ($raw_prompt == ($prompt + "\n") and ($prompt | endswith("\n") | not)))
           and (
             ($lines == [$final_paragraph])
             or (
               $lines[0] == $final_paragraph
               and $lines[1] == ""
+              and $codegraph_opens == []
+              and $codegraph_closes == []
+              and $language_contract_opens == [2]
+              and $language_contract_close_line > ($language_contract_open_line + 1)
+              and $language_contract_closes == [($line_count - 1)]
+              and ($unknown_markers | length == 0)
+            )
+            or (
+              $lines[0] == $final_paragraph
+              and $lines[1] == ""
               and $codegraph_opens == [2]
+              and ($codegraph_closes | length == 1)
               and $codegraph_close_line > ($codegraph_open_line + 1)
               and $language_contract_opens == [($codegraph_close_line + 2)]
               and $language_contract_close_line > ($language_contract_open_line + 1)

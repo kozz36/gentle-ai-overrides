@@ -158,13 +158,16 @@ test_runtime_specific_recovery_contract() (
 test_opencode_final_sdd_init_contract() (
   local apply="$ROOT/apply.sh"
   for invariant in \
-    "OpenCode supports exactly three hidden sdd-init shapes: the final 2.5.0" \
+    "OpenCode supports exactly four hidden sdd-init shapes: the final 2.6.0" \
     "You are an SDD executor for the init phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md and follow it exactly." \
     "<!-- gentle-ai:codegraph-guidance -->" \
     "<!-- /gentle-ai:codegraph-guidance -->" \
     "<!-- gentle-ai:agent-language-contract -->" \
     "<!-- /gentle-ai:agent-language-contract -->" \
-    'and $codegraph_opens == [2]' \
+    'and $codegraph_opens == []' \
+    'and $codegraph_closes == []' \
+    'and $language_contract_opens == [2]' \
+    'and ($codegraph_closes | length == 1)' \
     'and $language_contract_opens == [($codegraph_close_line + 2)]' \
     'and ($unknown_markers | length == 0)' \
     'elif $agent.prompt == $rc3_inline then "inline"' \
@@ -190,6 +193,8 @@ test_pi_workflow_consumer_contract() (
     'only when no rubric state has ever been declared or observed.' \
     'one effective combined instruction to every `sdd-apply` and `sdd-verify` launch' \
     'effective MODE is `strict-tdd`' \
+    'Gentle AI 2.6.0 with `gentle-pi@2.4.0`' \
+    'APPEND_SYSTEM.md remains installer-managed and untouched.' \
     'The orchestrator is read-only: never generate, mutate, broaden, infer, or select rubric rows'; do
     grep -Fq "$invariant" "$consumer" || fail "Pi workflow consumer lacks invariant: $invariant" || exit 1
   done

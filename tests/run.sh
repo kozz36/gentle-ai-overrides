@@ -485,35 +485,35 @@ test_pi_both_layouts_npm_configured() (
   [ "${workflow%/assets/sdd-orchestrator-workflow.md}" = "${init%/assets/agents/sdd-init.md}" ] || fail 'configured npm Pi assets did not share one package root' || exit 1
 )
 
-test_pi_final_230_npm_dual_assets() (
-  local home="$TMP_ROOT/pi-final-230-home" backups="$TMP_ROOT/pi-final-230-backups" output rc
+test_pi_final_240_npm_dual_assets() (
+  local home="$TMP_ROOT/pi-final-240-home" backups="$TMP_ROOT/pi-final-240-backups" output rc
   local npm_workflow npm_init git_workflow git_init git_workflow_before git_init_before
   npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
   npm_init="$home/$PI_NPM_INIT_REL"
   git_workflow="$home/$PI_GIT_WORKFLOW_REL"
   git_init="$home/$PI_GIT_INIT_REL"
-  git_workflow_before="$TMP_ROOT/pi-final-230-git-workflow-before.md"
-  git_init_before="$TMP_ROOT/pi-final-230-git-init-before.md"
-  output="$TMP_ROOT/pi-final-230-output.txt"
+  git_workflow_before="$TMP_ROOT/pi-final-240-git-workflow-before.md"
+  git_init_before="$TMP_ROOT/pi-final-240-git-init-before.md"
+  output="$TMP_ROOT/pi-final-240-output.txt"
   prepare_pi_package_home "$home"
   write_pi_workflow_at "$npm_workflow"
   write_pi_workflow_at "$git_workflow"
   write_pi_init_at "$git_init"
-  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.3.0"]}'
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.4.0"]}'
   cp -- "$git_workflow" "$git_workflow_before"
   cp -- "$git_init" "$git_init_before"
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
   rc=$?
-  [ "$rc" -eq 2 ] || fail "final gentle-pi 2.3.0 npm dual-asset check returned $rc" || exit 1
+  [ "$rc" -eq 2 ] || fail "final gentle-pi 2.4.0 npm dual-asset check returned $rc" || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
-  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$npm_workflow" || fail 'final gentle-pi 2.3.0 npm workflow was not transformed' || exit 1
-  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$npm_init" || fail 'final gentle-pi 2.3.0 npm sdd-init asset was not transformed' || exit 1
-  cmp -s "$git_workflow" "$git_workflow_before" || fail 'final gentle-pi 2.3.0 npm selection changed stale git workflow' || exit 1
-  cmp -s "$git_init" "$git_init_before" || fail 'final gentle-pi 2.3.0 npm selection changed stale git sdd-init asset' || exit 1
+  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$npm_workflow" || fail 'final gentle-pi 2.4.0 npm workflow was not transformed' || exit 1
+  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$npm_init" || fail 'final gentle-pi 2.4.0 npm sdd-init asset was not transformed' || exit 1
+  cmp -s "$git_workflow" "$git_workflow_before" || fail 'final gentle-pi 2.4.0 npm selection changed stale git workflow' || exit 1
+  cmp -s "$git_init" "$git_init_before" || fail 'final gentle-pi 2.4.0 npm selection changed stale git sdd-init asset' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
   rc=$?
-  [ "$rc" -eq 0 ] || fail "final gentle-pi 2.3.0 npm dual assets were not clean after apply: $rc" || exit 1
+  [ "$rc" -eq 0 ] || fail "final gentle-pi 2.4.0 npm dual assets were not clean after apply: $rc" || exit 1
 )
 
 test_pi_both_layouts_without_jq_fails_before_writes() (
@@ -1401,6 +1401,25 @@ test_opencode_sdd_init_final_contract_validation() (
   prompt="$(opencode_sdd_init_final_prompt)"$'\n'
   [ "$(write_opencode_sdd_init_prompt "$config" "$prompt"; opencode_sdd_init_mode "$config")" = inline ] || fail 'OpenCode final prompt with its single canonical terminal newline was refused' || exit 1
 
+  write_opencode_sdd_init_prompt "$config" "$(opencode_sdd_init_260_prompt)"
+  [ "$(opencode_sdd_init_mode "$config")" = inline ] || fail 'OpenCode final 2.6.0 language-only prompt was not recognized' || exit 1
+  opencode_sdd_init_delegates "$config" || fail 'OpenCode final 2.6.0 language-only prompt did not delegate to the managed skill' || exit 1
+  prompt="$(opencode_sdd_init_260_prompt)"$'\n'
+  [ "$(write_opencode_sdd_init_prompt "$config" "$prompt"; opencode_sdd_init_mode "$config")" = inline ] || fail 'OpenCode final 2.6.0 prompt with its single canonical terminal newline was refused' || exit 1
+
+  for label in 260-arbitrary-suffix 260-partial-marker 260-duplicate-marker 260-reordered-suffix 260-unknown-suffix 260-double-terminal-newline; do
+    case "$label" in
+      260-arbitrary-suffix) prompt="$(opencode_sdd_init_260_prompt)"$'\nUnexpected suffix.' ;;
+      260-partial-marker) prompt="$OPENCODE_SDD_INIT_FINAL_PARAGRAPH"$'\n\n<!-- gentle-ai:agent-language-contract -->\npartial contract block' ;;
+      260-duplicate-marker) prompt="$(opencode_sdd_init_260_prompt)"$'\n\n'"$OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK" ;;
+      260-reordered-suffix) prompt="$(opencode_sdd_init_260_prompt)"$'\n\n'"$OPENCODE_SDD_INIT_CODEGRAPH_BLOCK" ;;
+      260-unknown-suffix) prompt="$(opencode_sdd_init_260_prompt)"$'\n\n<!-- gentle-ai:unknown -->\nunknown managed block\n<!-- /gentle-ai:unknown -->' ;;
+      260-double-terminal-newline) prompt="$(opencode_sdd_init_260_prompt)"$'\n\n' ;;
+    esac
+    write_opencode_sdd_init_prompt "$config" "$prompt"
+    opencode_sdd_init_mode "$config" >/dev/null 2>&1 && fail "OpenCode $label prompt passed final-contract validation" && exit 1
+  done
+
   for label in arbitrary-prefix embedded-sentence arbitrary-suffix partial-marker duplicate-marker out-of-order-marker unknown-marker invented-artifact-language-marker visible wrong-skill-path redirected refusal; do
     case "$label" in
       arbitrary-prefix) prompt=$'Unrelated prefix.\n'"$(opencode_sdd_init_final_prompt)" ;;
@@ -1544,6 +1563,12 @@ opencode_sdd_init_final_prompt() {
     "$OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK"
 }
 
+opencode_sdd_init_260_prompt() {
+  printf '%s\n\n%s' \
+    "$OPENCODE_SDD_INIT_FINAL_PARAGRAPH" \
+    "$OPENCODE_SDD_INIT_AGENT_LANGUAGE_CONTRACT_BLOCK"
+}
+
 write_opencode_sdd_init_prompt() {
   local file="$1" prompt="$2" hidden="${3:-true}"
   jq -n --arg prompt "$prompt" --argjson hidden "$hidden" '{agent: {"sdd-init": {hidden: $hidden, prompt: $prompt}}}' > "$file"
@@ -1642,13 +1667,14 @@ test_neutral_external_profile_lifecycle() (
 )
 
 # This fixture mirrors the active Claude, Pi, and OpenCode assets emitted by a
-# fresh Gentle AI 2.5.0 install. It must not create legacy compatibility paths.
-test_fresh_250_active_layout_lifecycle() (
-  local home="$TMP_ROOT/fresh-250-home" backups="$TMP_ROOT/fresh-250-backups" output rc config_before
+# fresh Gentle AI 2.6.0 install with gentle-pi@2.4.0. It must not create legacy paths.
+test_fresh_260_active_layout_lifecycle() (
+  local home="$TMP_ROOT/fresh-260-home" backups="$TMP_ROOT/fresh-260-backups" output rc config_before
   local claude="$home/.claude/CLAUDE.md" gentleman="$home/.claude/output-styles/gentleman.md"
   local pi="$home/.pi/agent/APPEND_SYSTEM.md" pi_init="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
   local pi_workflow="$home/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md"
   local config="$home/.config/opencode/opencode.json" opencode_skill="$home/.config/opencode/skills/sdd-init/SKILL.md"
+  local pi_before
 
   mkdir -p "$home/.gentle-ai" "$(dirname -- "$claude")" "$(dirname -- "$gentleman")" \
     "$(dirname -- "$home/.claude/skills/_shared/sdd-orchestrator-workflow.md")" \
@@ -1665,37 +1691,44 @@ test_fresh_250_active_layout_lifecycle() (
   write_init_skill_stock > "$home/.claude/skills/sdd-init/SKILL.md"
   write_init_details_stock > "$home/.claude/skills/sdd-init/references/init-details.md"
   write_pi_append_stock > "$pi"
+  pi_before="$TMP_ROOT/fresh-260-pi-append-before.md"
+  cp -- "$pi" "$pi_before"
   write_pi_init_stock > "$pi_init"
   write_pi_workflow_220_fixture > "$pi_workflow"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.4.0"]}'
   {
     printf '%s\n' '<!-- gentle-ai:persona -->'
     cat "$ROOT/persona/persona-block.md"
     printf '%s\n' '<!-- /gentle-ai:persona -->'
   } > "$home/.config/opencode/AGENTS.md"
-  write_opencode_final_init_config "$config" "$OPENCODE_SDD_INIT_FINAL_PARAGRAPH"
+  write_opencode_final_init_config "$config" "$(opencode_sdd_init_260_prompt)"
   write_opencode_stock > "$home/.config/opencode/plugins/engram.ts"
   write_init_skill_stock > "$opencode_skill"
   write_init_details_stock > "$home/.config/opencode/skills/sdd-init/references/init-details.md"
 
-  output="$TMP_ROOT/fresh-250-check-before.txt"
+  output="$TMP_ROOT/fresh-260-check-before.txt"
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check > "$output"
   rc=$?
-  [ "$rc" -eq 2 ] || { cat "$output" >&2; fail "fresh 2.5.0 layout should be pending, got rc $rc"; exit 1; }
-  [ ! -e "$backups/.claude/output-styles/gentleman.md" ] || fail 'fresh 2.5.0 --check created a Claude backup' || exit 1
+  [ "$rc" -eq 2 ] || { cat "$output" >&2; fail "fresh 2.6.0 layout should be pending, got rc $rc"; exit 1; }
+  [ ! -e "$backups/.claude/output-styles/gentleman.md" ] || fail 'fresh 2.6.0 --check created a Claude backup' || exit 1
+  cmp -s "$pi" "$pi_before" || fail 'fresh 2.6.0 --check changed Pi APPEND' || exit 1
+  [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'fresh 2.6.0 --check backed up Pi APPEND' || exit 1
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" >/dev/null || exit 1
-  grep -Fq '# Neutral Output Style' "$gentleman" || fail 'fresh 2.5.0 Claude style was not transformed' || exit 1
-  grep -Fq 'allowed_answers: strict|rubric' "$pi_init" || fail 'fresh 2.5.0 Pi executable asset was not transformed' || exit 1
-  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$pi_workflow" || fail 'fresh 2.5.0 Pi package workflow was not transformed' || exit 1
-  grep -Fq 'single writer of project TDD policy' "$opencode_skill" || fail 'fresh 2.5.0 OpenCode skill was not transformed' || exit 1
-  [ ! -e "$home/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'fresh 2.5.0 layout manufactured an OpenCode prompt file' || exit 1
+  cmp -s "$pi" "$pi_before" || fail 'fresh 2.6.0 apply changed Pi APPEND' || exit 1
+  [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'fresh 2.6.0 apply backed up Pi APPEND' || exit 1
+  grep -Fq '# Neutral Output Style' "$gentleman" || fail 'fresh 2.6.0 Claude style was not transformed' || exit 1
+  grep -Fq 'allowed_answers: strict|rubric' "$pi_init" || fail 'fresh 2.6.0 Pi executable asset was not transformed' || exit 1
+  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$pi_workflow" || fail 'fresh 2.6.0 Pi package workflow was not transformed' || exit 1
+  grep -Fq 'single writer of project TDD policy' "$opencode_skill" || fail 'fresh 2.6.0 OpenCode skill was not transformed' || exit 1
+  [ ! -e "$home/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'fresh 2.6.0 layout manufactured an OpenCode prompt file' || exit 1
   load_overlay "$home" "$backups"
-  [ "$(opencode_sdd_init_mode "$config")" = inline ] || fail 'fresh 2.5.0 zero-block OpenCode sdd-init prompt does not use the final inline contract' || exit 1
+  [ "$(opencode_sdd_init_mode "$config")" = inline ] || fail 'fresh 2.6.0 language-only OpenCode sdd-init prompt does not use the final inline contract' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check >/dev/null
   rc=$?
-  [ "$rc" -eq 0 ] || fail "fresh 2.5.0 layout should be clean after apply, got rc $rc" || exit 1
+  [ "$rc" -eq 0 ] || fail "fresh 2.6.0 layout should be clean after apply, got rc $rc" || exit 1
 
-  config_before="$TMP_ROOT/fresh-250-opencode-config-before.json"
+  config_before="$TMP_ROOT/fresh-260-opencode-config-before.json"
   cp -- "$config" "$config_before"
   jq '.agent["sdd-init"].prompt = "Do not read your skill file at ~/.config/opencode/skills/sdd-init/SKILL.md."' "$config" > "$config_before.next"
   mv -- "$config_before.next" "$config"
@@ -1905,7 +1938,7 @@ run test_pi_git_only_layout
 run test_pi_npm_only_layout
 run test_pi_both_layouts_git_configured
 run test_pi_both_layouts_npm_configured
-run test_pi_final_230_npm_dual_assets
+run test_pi_final_240_npm_dual_assets
 run test_pi_both_layouts_without_jq_fails_before_writes
 run test_pi_no_jq_node_unsupported_exact_source_fails_before_writes
 run test_pi_no_jq_node_canonical_source_selects_configured_root
@@ -1944,7 +1977,7 @@ run test_init_rubric_reference_and_pi_idempotence
 run test_init_rubric_replaces_complete_section
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
 run test_neutral_external_profile_lifecycle
-run test_fresh_250_active_layout_lifecycle
+run test_fresh_260_active_layout_lifecycle
 
 bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 bash "$ROOT/tests/rubric-compiler-core.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))

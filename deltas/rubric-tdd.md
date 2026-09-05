@@ -21,6 +21,8 @@ The orchestrator consumes validated rubric state ONCE per session (at first appl
 <!-- gentle-ai:pi-rubric-forwarding -->
 ### Project TDD Rubric Forwarding
 
+Compatibility is verified with official Gentle AI 2.6.0 with `gentle-pi@2.4.0`. Pi preservation boundary: this forwarding block owns only this package workflow; APPEND_SYSTEM.md remains installer-managed and untouched. Do not read, transform, back up, or write it.
+
 For each actual `sdd-apply` or `sdd-verify` work slice, consume only a valid active/authoritative `RubricConsumerEnvelopeV1` from the state gate. Its project-generated policy must come from the canonical `sdd-init` context for the active artifact store: OpenSpec reads only `openspec/config.yaml` `testing.rubric.active: true`; Engram reads only the canonical `sdd-init/{project}` policy artifact carrying `## TDD RUBRIC (per-work-type — AUTHORITATIVE)` and `Status: active/authoritative.`; hybrid requires semantically equivalent active/authoritative policy in its configured stores.
 
 The orchestrator is the sole resolution owner: classify declared task intent first, corroborate changed paths or symbols, reject incompatible intents, then forward its one combined row and canonical-model digest without downstream re-classification. Missing, malformed, duplicate, staging, recovery-required, conflicted, unavailable, or mismatched state MUST block apply/verify with `RubricConsumerBlockedV1` and `recovery_action=run /gentle-sdd-init recovery`; never fall back to rubric `default` or binary `strict_tdd`. Binary `strict_tdd` is permitted only when no rubric state has ever been declared or observed.
