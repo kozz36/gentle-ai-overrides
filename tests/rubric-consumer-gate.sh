@@ -117,6 +117,8 @@ test_temporary_home_host_goldens() (
   assert_forwarding "$prose" 'Claude lazy prose' /gentle-sdd-init || exit 1
   for host in Cursor 'VS Code Copilot' 'Gemini CLI' Antigravity; do assert_forwarding "$list" "$host list" /sdd-init || exit 1; done
   assert_forwarding "$pi_workflow" 'Pi workflow' /gentle-sdd-init || exit 1
+  grep -Fq 'Gentle AI 2.6.0 with `gentle-pi@2.4.0`' "$pi_workflow" || fail 'Pi workflow lacks the 2.6.0/2.4.0 compatibility contract' || exit 1
+  grep -Fq 'APPEND_SYSTEM.md remains installer-managed and untouched.' "$pi_workflow" || fail 'Pi workflow lacks the APPEND preservation boundary' || exit 1
   jq -r '.agent["gentle-orchestrator"].prompt' "$json" > "$TMP_ROOT/opencode-prompt"
   assert_forwarding "$TMP_ROOT/opencode-prompt" 'OpenCode JSON' /sdd-init || exit 1
   host_rows | grep -Fqx 'codex|rubric-none|.codex/AGENTS.md' || fail 'Codex is not rubric-none' || exit 1
