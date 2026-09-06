@@ -598,10 +598,13 @@ extract_shape() { extract_shape_from "$RUBRIC_FILE" "$1"; }
 
 RUBRIC_ITEM4="$(extract_shape list-item)"
 RUBRIC_PROSE="$(extract_shape prose)"
+# Exact prose emitted by the preceding overlay revision (base 8f030e8). Keep this
+# migration narrow: only this complete managed paragraph may be replaced.
+RUBRIC_PROSE_PREVIOUS='Before classification, consume only a valid active/authoritative `RubricConsumerEnvelopeV1` from the state gate. The orchestrator is the sole resolution owner: classify declared task intent first, corroborate changed paths/symbols, reject incompatible intents, then forward its one combined row and canonical-model digest without downstream re-classification. Missing, malformed, duplicate, staging, recovery-required, conflicted, unavailable, or mismatched state MUST block apply/verify with `RubricConsumerBlockedV1` and `recovery_action=run /gentle-sdd-init recovery`; never fall back to rubric `default` or binary `strict_tdd`. Binary `strict_tdd` is permitted only when no rubric state has ever been declared or observed. Managed forwarding surfaces are Claude Code lazy prose; Pi, Cursor, VS Code Copilot, Gemini CLI, and Antigravity lists; and OpenCode JSON. Codex is `rubric-none`; Kimi is explicitly current-scope unmanaged.'
 CACHE_NEW="$(extract_shape cache-sentence)"
 RUBRIC_PI_WORKFLOW="$(extract_shape pi-workflow)"
 
-[ -n "$RUBRIC_ITEM4" ] && [ -n "$RUBRIC_PROSE" ] && [ -n "$CACHE_NEW" ] && [ -n "$RUBRIC_PI_WORKFLOW" ] || {
+[ -n "$RUBRIC_ITEM4" ] && [ -n "$RUBRIC_PROSE" ] && [ -n "$RUBRIC_PROSE_PREVIOUS" ] && [ -n "$CACHE_NEW" ] && [ -n "$RUBRIC_PI_WORKFLOW" ] || {
   echo "FATAL: $RUBRIC_FILE is missing one of the shape blocks" >&2; exit 1; }
 
 # First line of item 4 -- the marker used to locate the numbered-list block.
@@ -635,20 +638,22 @@ Do not rely on the child agent to discover this independently.'
 # The weaker caching sentence some hosts carry. Upgraded in place where present,
 # so the rubric is explicitly part of what gets cached. Never invented where absent.
 CACHE_OLD='The orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.'
+# Exact cache sentence emitted by base 8f030e8. Upgraded only when present.
+CACHE_PREVIOUS='The orchestrator consumes validated rubric state ONCE per session (at first apply/verify launch) and caches it, classifying each apply slice by declared intent corroborated by its diff.'
 
 # Transform for hosts WITH the numbered list. Idempotent:
 #   - inserts item 4 after item 3 when item 4 is absent
 #   - replaces an existing item 4 and its indented continuation lines
 #   - drops the legacy loose paragraph (and the blank line it leaves behind)
-#   - upgrades the caching sentence only where the weak one exists
+#   - upgrades exact known predecessor caching sentences only where they exist
 # Exits 1 if the list anchor is gone (gentle-ai reshaped the template).
 rubric_transform_list() {
   ITEM4="$RUBRIC_ITEM4" ITEM4_HEAD="$RUBRIC_ITEM4_HEAD" PROSE="$RUBRIC_PROSE" \
-  A3="$ANCHOR_ITEM3" C_OLD="$CACHE_OLD" C_NEW="$CACHE_NEW" \
+  A3="$ANCHOR_ITEM3" C_OLD="$CACHE_OLD" C_PREVIOUS="$CACHE_PREVIOUS" C_NEW="$CACHE_NEW" \
   awk '
     BEGIN {
       item4 = ENVIRON["ITEM4"]; head = ENVIRON["ITEM4_HEAD"]; prose = ENVIRON["PROSE"]
-      a3 = ENVIRON["A3"];       c_old = ENVIRON["C_OLD"];     c_new = ENVIRON["C_NEW"]
+      a3 = ENVIRON["A3"];       c_old = ENVIRON["C_OLD"];     c_previous = ENVIRON["C_PREVIOUS"]; c_new = ENVIRON["C_NEW"]
     }
     { line[NR] = $0 }
     END {
@@ -681,7 +686,7 @@ rubric_transform_list() {
           replace4 = 1
           continue
         }
-        print (line[i] == c_old) ? c_new : line[i]
+        print (line[i] == c_old || line[i] == c_previous) ? c_new : line[i]
         if (i == anchor && !have4) print item4                  # item 4 joins the list
       }
       exit 0
@@ -690,21 +695,25 @@ rubric_transform_list() {
 }
 
 # Transform for claude-code's condensed workflow: no numbered list exists there, so
-# the loose-paragraph form is the only shape that fits. Left in prose form.
+# the loose-paragraph form is the only shape that fits. Left in prose form. The one
+# exact predecessor paragraph is replaced in place; duplicate or mixed managed prose
+# is ambiguous and refuses before any write.
 rubric_transform_prose() {
-  PROSE="$RUBRIC_PROSE" AP="$ANCHOR_PROSE" awk '
-    BEGIN { prose = ENVIRON["PROSE"]; ap = ENVIRON["AP"] }
+  PROSE="$RUBRIC_PROSE" PREVIOUS="$RUBRIC_PROSE_PREVIOUS" AP="$ANCHOR_PROSE" awk '
+    BEGIN { prose = ENVIRON["PROSE"]; previous = ENVIRON["PREVIOUS"]; ap = ENVIRON["AP"] }
     { line[NR] = $0 }
     END {
       n = NR
       for (i = 1; i <= n; i++) {
-        if (!anchor && index(line[i], ap) == 1) anchor = i
-        if (!have   && line[i] == prose)        have   = i
+        if (index(line[i], ap) == 1) { anchors++; anchor = i }
+        if (line[i] == prose) { current++; current_at = i }
+        if (line[i] == previous) { prior++; prior_at = i }
       }
-      if (!anchor) exit 1
+      if (anchors != 1 || current > 1 || prior > 1 || (current && prior)) exit 1
       for (i = 1; i <= n; i++) {
-        print line[i]
-        if (i == anchor && !have) { print ""; print prose }
+        if (i == prior_at) print prose
+        else print line[i]
+        if (i == anchor && !current && !prior) { print ""; print prose }
       }
       exit 0
     }

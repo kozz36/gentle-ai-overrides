@@ -130,10 +130,15 @@ zero/two style files fails closed; the overlay never creates a style file.
 ### 3. `deltas/rubric-tdd.md` — the RUBRIC TDD condition
 
 The rubric condition tells the orchestrator that when a project's `sdd-init` defines
-a per-work-type test rubric, it must classify the change by its diff signature and
-forward the matching rubric row into the sub-agent prompt — including when
-`strict_tdd` is `false`, since a rubric row can demand test-first independently of
-the binary flag.
+a per-work-type test rubric, it reads and caches that canonical authoritative policy
+once per session. Every distinct apply/verify slice is resolved afresh with its own
+declared intent and the policy's matching rules: `default` applies only when no
+non-default row matches, while applicable non-default rows union under strictest-mode
+precedence. The effective MODE and exact declared commands, disciplines/evidence, and
+skill paths are forwarded without rewriting the policy. `sdd-init` remains the producer
+and activation owner; consumer-envelope or compiler diagnostics cannot override valid
+policy. Missing, ambiguous, or conflicting policy stops for human clarification without
+fabricating a runtime recovery dispatch, and binary `strict_tdd` fallback is only for no rubric.
 
 **It is item 4 of the MANDATORY numbered list**, not a paragraph after it:
 
@@ -158,7 +163,7 @@ The delta file carries four blocks, each fenced by `<!-- shape:NAME -->` markers
 | --- | --- |
 | `list-item` | the canonical item 4 — every host that has the numbered list |
 | `prose` | the condensed paragraph — the one host that has no list (see below) |
-| `cache-sentence` | the session-cached, declared-intent classification sentence that replaces the weaker "resolves TDD status ONCE per session" wherever that sentence exists |
+| `cache-sentence` | the canonical-policy cache sentence: it caches policy once per session while requiring an afresh declared-intent resolution for every distinct slice |
 | `pi-workflow` | the marker-delimited Pi package workflow forwarding block after its binary Strict TDD contract |
 
 The canonical wording of `list-item` and `cache-sentence` is maintained in
@@ -199,9 +204,8 @@ redirected/refusal text, arbitrary prefix/suffix, embedded sentence, or partial,
 duplicate, unknown, or out-of-order managed marker block fails global preflight
 before a host file is written.
 
-Recovery commands are runtime-specific: Claude prose and the Pi workflow use
-`recovery_action=run /gentle-sdd-init recovery`; numbered-list surfaces, including
-OpenCode JSON, use `recovery_action=run /sdd-init recovery`.
+All consumer surfaces stop for human clarification when canonical policy is missing,
+ambiguous, or conflicting. They do not fabricate or dispatch a runtime recovery command.
 
 ### 5. Pi 2.6.0 / `gentle-pi@2.4.0` compatibility ownership
 

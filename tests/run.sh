@@ -158,13 +158,15 @@ test_opencode_refuses_custom_body() (
   cmp -s "$file" "$before" || fail 'OpenCode custom body was overwritten' || exit 1
 )
 
-test_rubric_list_replaces_legacy_item4() (
-  local home="$TMP_ROOT/rubric-list-home" backups="$TMP_ROOT/rubric-list-backups" md json loose before json_before transformed expected loose_expected
+test_rubric_list_migrates_predecessor_item4_and_cache() (
+  local home="$TMP_ROOT/rubric-list-home" backups="$TMP_ROOT/rubric-list-backups" md json loose before json_before json_after transformed expected loose_expected
+  local predecessor_cache='The orchestrator consumes validated rubric state ONCE per session (at first apply/verify launch) and caches it, classifying each apply slice by declared intent corroborated by its diff.'
   md="$home/.pi/agent/APPEND_SYSTEM.md"
   json="$home/.config/opencode/opencode.json"
   loose="$home/.pi/agent/LEGACY_PROSE.md"
   before="$TMP_ROOT/rubric-list-before.md"
   json_before="$TMP_ROOT/rubric-list-before.json"
+  json_after="$TMP_ROOT/rubric-list-after.json"
   transformed="$TMP_ROOT/rubric-list-transformed.md"
   expected="$TMP_ROOT/rubric-list-expected.md"
   loose_expected="$TMP_ROOT/rubric-list-loose-expected.md"
@@ -173,10 +175,15 @@ test_rubric_list_replaces_legacy_item4() (
 Before the strict-TDD forwarding list.
 3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction
 4. **Additional condition — per-work-type rubric (project-generated, this file stays project-agnostic).**
-   Only consume an active/authoritative rubric; otherwise preserve binary `strict_tdd` behavior. Classify the
-   change against the matching rubric row and forward its instruction to the sub-agent.
+   Before classification, consume only a valid active/authoritative `RubricConsumerEnvelopeV1` from the state gate.
+   The orchestrator is the sole resolution owner: classify declared task intent first, corroborate changed paths/symbols,
+   reject incompatible intents, then forward its one combined row and canonical-model digest without downstream
+   re-classification. Missing, malformed, duplicate, staging, recovery-required, conflicted, unavailable, or mismatched
+   state MUST block apply/verify with `RubricConsumerBlockedV1` and `recovery_action=run /sdd-init recovery`; never fall back to rubric `default` or binary `strict_tdd`. Binary `strict_tdd` is permitted only when no rubric state has ever
+   been declared or observed. Managed forwarding surfaces are Claude Code lazy prose; Pi, Cursor, VS Code Copilot, Gemini CLI, and
+   Antigravity lists; and OpenCode JSON. Codex is `rubric-none`; Kimi is explicitly current-scope unmanaged.
 5. Subsequent numbered-list item must survive unchanged.
-The orchestrator resolves TDD status ONCE per session (at first apply/verify launch) and caches it.
+The orchestrator consumes validated rubric state ONCE per session (at first apply/verify launch) and caches it, classifying each apply slice by declared intent corroborated by its diff.
 Following cache prose must survive unchanged.
 EOF
   cp -- "$md" "$before"
@@ -191,9 +198,9 @@ EOF
     printf '%s\n' 'Following cache prose must survive unchanged.'
   } > "$expected"
 
-  rubric_transform_list < "$md" > "$transformed" || fail 'legacy list transform refused a valid fixture' || exit 1
-  cmp -s "$transformed" "$expected" || fail 'legacy list transform did not replace the complete item 4 block' || exit 1
-  grep -Fq 'matching rubric row' "$transformed" && fail 'legacy item 4 body survived transform' && exit 1
+  rubric_transform_list < "$md" > "$transformed" || fail 'predecessor list transform refused a valid fixture' || exit 1
+  cmp -s "$transformed" "$expected" || fail 'predecessor list transform did not replace the complete item 4 block and cache sentence' || exit 1
+  ! grep -Fq "$predecessor_cache" "$transformed" || fail 'predecessor cache sentence survived list transform' || exit 1
   grep -Fq '5. Subsequent numbered-list item must survive unchanged.' "$transformed" || fail 'transform consumed item 5' || exit 1
   grep -Fq 'Following cache prose must survive unchanged.' "$transformed" || fail 'transform consumed following cache prose' || exit 1
 
@@ -204,6 +211,7 @@ EOF
   expect_rc 0 rubric_apply_md "$md" list || exit 1
   cmp -s "$md" "$expected" || fail 'Markdown rubric apply did not install canonical content' || exit 1
   expect_rc 1 rubric_apply_md "$md" list || exit 1
+  cmp -s "$md" "$expected" || fail 'reapplying Markdown predecessor migration was not byte-idempotent' || exit 1
 
   jq -n --rawfile prompt "$before" '{agent: {"gentle-orchestrator": {prompt: $prompt}}}' > "$json"
   cp -- "$json" "$json_before"
@@ -213,7 +221,12 @@ EOF
   CHECK_ONLY=0
   expect_rc 0 rubric_apply_json "$json" || exit 1
   jq -e --rawfile expected "$expected" '.agent["gentle-orchestrator"].prompt == $expected' "$json" >/dev/null || fail 'JSON rubric apply did not install canonical content' || exit 1
+  jq -e --arg obsolete "$predecessor_cache" \
+    '.agent["gentle-orchestrator"].prompt | contains($obsolete) | not' "$json" >/dev/null ||
+    fail 'predecessor cache sentence survived JSON transform' || exit 1
+  cp -- "$json" "$json_after"
   expect_rc 1 rubric_apply_json "$json" || exit 1
+  cmp -s "$json" "$json_after" || fail 'reapplying JSON predecessor migration was not byte-idempotent' || exit 1
 
   {
     printf '%s\n' '3. If the search fails or `strict_tdd` is not found, do NOT add the TDD instruction' '' "$RUBRIC_PROSE" '' "$CACHE_OLD"
@@ -225,30 +238,70 @@ EOF
   cmp -s "$transformed" "$loose_expected" || fail 'legacy loose paragraph was not migrated' || exit 1
 )
 
-test_runtime_specific_recovery_actions() (
-  local home="$TMP_ROOT/recovery-actions-home" backups="$TMP_ROOT/recovery-actions-backups" list prose workflow output
+test_rubric_prose_migrates_known_predecessor_exactly() (
+  local home="$TMP_ROOT/rubric-prose-home" backups="$TMP_ROOT/rubric-prose-backups" file before after duplicate ambiguous output
+  local prose_anchor='When launching `sdd-apply` or `sdd-verify`, search for testing capabilities'
+  local base_8f030e8_prose='Before classification, consume only a valid active/authoritative `RubricConsumerEnvelopeV1` from the state gate. The orchestrator is the sole resolution owner: classify declared task intent first, corroborate changed paths/symbols, reject incompatible intents, then forward its one combined row and canonical-model digest without downstream re-classification. Missing, malformed, duplicate, staging, recovery-required, conflicted, unavailable, or mismatched state MUST block apply/verify with `RubricConsumerBlockedV1` and `recovery_action=run /gentle-sdd-init recovery`; never fall back to rubric `default` or binary `strict_tdd`. Binary `strict_tdd` is permitted only when no rubric state has ever been declared or observed. Managed forwarding surfaces are Claude Code lazy prose; Pi, Cursor, VS Code Copilot, Gemini CLI, and Antigravity lists; and OpenCode JSON. Codex is `rubric-none`; Kimi is explicitly current-scope unmanaged.'
+  file="$home/.claude/skills/_shared/sdd-orchestrator-workflow.md"
+  before="$TMP_ROOT/rubric-prose-before.md"
+  after="$TMP_ROOT/rubric-prose-after.md"
+  duplicate="$home/.claude/skills/_shared/DUPLICATE.md"
+  ambiguous="$home/.claude/skills/_shared/AMBIGUOUS.md"
+  output="$TMP_ROOT/rubric-prose-output.md"
+  mkdir -p "$(dirname -- "$file")"
+  {
+    printf '%s\n' 'Before the condensed Strict TDD section.' "$prose_anchor" '' "$base_8f030e8_prose" '' 'After the managed prose must survive unchanged.'
+  } > "$file"
+  cp -- "$file" "$before"
+
+  load_overlay "$home" "$backups"
+  expect_rc 0 rubric_apply_md "$file" prose || exit 1
+  [ "$(grep -Fxc "$RUBRIC_PROSE" "$file")" -eq 1 ] || fail 'known predecessor prose was not replaced by one canonical prose block' || exit 1
+  ! grep -Fq "$base_8f030e8_prose" "$file" || fail 'known predecessor prose survived migration' || exit 1
+  grep -Fqx 'Before the condensed Strict TDD section.' "$file" || fail 'predecessor migration changed leading surrounding text' || exit 1
+  grep -Fqx 'After the managed prose must survive unchanged.' "$file" || fail 'predecessor migration changed trailing surrounding text' || exit 1
+  cp -- "$file" "$after"
+  expect_rc 1 rubric_apply_md "$file" prose || exit 1
+  cmp -s "$file" "$after" || fail 'reapplying migrated prose was not byte-idempotent' || exit 1
+  grep -Fq "$base_8f030e8_prose" "$before" || fail 'fixture does not contain the base 8f030e8 predecessor prose' || exit 1
+
+  printf '%s\n' "$prose_anchor" "$base_8f030e8_prose" "$base_8f030e8_prose" > "$duplicate"
+  cp -- "$duplicate" "$before"
+  rubric_transform_prose < "$duplicate" > "$output" && fail 'duplicate predecessor prose was transformed' && exit 1
+  expect_rc 3 rubric_apply_md "$duplicate" prose || exit 1
+  cmp -s "$duplicate" "$before" || fail 'duplicate predecessor prose target changed after refusal' || exit 1
+
+  printf '%s\n' "$prose_anchor" "$base_8f030e8_prose" "$RUBRIC_PROSE" > "$ambiguous"
+  cp -- "$ambiguous" "$before"
+  rubric_transform_prose < "$ambiguous" > "$output" && fail 'mixed predecessor and canonical prose was transformed' && exit 1
+  expect_rc 3 rubric_apply_md "$ambiguous" prose || exit 1
+  cmp -s "$ambiguous" "$before" || fail 'mixed predecessor and canonical prose target changed after refusal' || exit 1
+)
+
+test_human_clarification_without_runtime_dispatch() (
+  local home="$TMP_ROOT/clarification-actions-home" backups="$TMP_ROOT/clarification-actions-backups" list prose workflow output
   list="$home/list.md"
   prose="$home/prose.md"
   workflow="$home/workflow.md"
-  output="$TMP_ROOT/recovery-actions-output.md"
+  output="$TMP_ROOT/clarification-actions-output.md"
   mkdir -p "$home"
 
   load_overlay "$home" "$backups"
   printf '%s\n' "$ANCHOR_ITEM3" > "$list"
-  rubric_transform_list < "$list" > "$output" || fail 'list recovery transform refused its anchor' || exit 1
-  grep -Fqx '   state MUST block apply/verify with `RubricConsumerBlockedV1` and `recovery_action=run /sdd-init recovery`; never fall back to rubric `default` or binary `strict_tdd`. Binary `strict_tdd` is permitted only when no rubric state has ever' "$output" || fail 'list/OpenCode recovery action is not /sdd-init' || exit 1
-  grep -Fq 'recovery_action=run /gentle-sdd-init recovery' "$output" && fail 'list/OpenCode recovery action used the Claude/Pi command' && exit 1
+  rubric_transform_list < "$list" > "$output" || fail 'list clarification transform refused its anchor' || exit 1
+  grep -Fq 'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' "$output" || fail 'list/OpenCode does not stop for human clarification' || exit 1
+  grep -Fq 'do not fabricate runtime recovery dispatch.' "$output" || fail 'list/OpenCode permits runtime recovery dispatch' || exit 1
+  ! grep -Fq 'recovery_action=run ' "$output" || fail 'list/OpenCode fabricated a recovery command' || exit 1
 
   printf '%s\n' "$ANCHOR_PROSE" > "$prose"
-  rubric_transform_prose < "$prose" > "$output" || fail 'Claude prose recovery transform refused its anchor' || exit 1
-  grep -Fq 'recovery_action=run /gentle-sdd-init recovery' "$output" || fail 'Claude prose recovery action is not /gentle-sdd-init' || exit 1
-  grep -Fq 'recovery_action=run /sdd-init recovery' "$output" && fail 'Claude prose recovery action used the list/OpenCode command' && exit 1
+  rubric_transform_prose < "$prose" > "$output" || fail 'Claude prose clarification transform refused its anchor' || exit 1
+  grep -Fq 'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' "$output" || fail 'Claude prose does not stop for human clarification' || exit 1
+  ! grep -Fq 'recovery_action=run ' "$output" || fail 'Claude prose fabricated a recovery command' || exit 1
 
   write_pi_workflow_220_fixture > "$workflow"
-  pi_rubric_workflow_transform < "$workflow" > "$output" || fail 'Pi recovery transform refused its workflow fixture' || exit 1
-  grep -Fq 'recovery_action=run /gentle-sdd-init recovery' "$output" || fail 'Pi workflow recovery action is not /gentle-sdd-init' || exit 1
-  grep -Fq 'recovery_action=run /sdd-init recovery' "$output" && fail 'Pi workflow recovery action used the list/OpenCode command' && exit 1
-  :
+  pi_rubric_workflow_transform < "$workflow" > "$output" || fail 'Pi clarification transform refused its workflow fixture' || exit 1
+  grep -Fq 'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' "$output" || fail 'Pi workflow does not stop for human clarification' || exit 1
+  ! grep -Fq 'recovery_action=run ' "$output" || fail 'Pi workflow fabricated a recovery command' || exit 1
 )
 
 test_rubric_list_refuses_ambiguous_headings() (
@@ -1069,18 +1122,25 @@ test_pi_workflow_rubric_forwarding_contract() (
   grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$init_file" || fail 'Pi sdd-init was not still processed' || exit 1
 
   for golden in \
-    'RubricConsumerEnvelopeV1' \
+    'canonical `sdd-init` authoritative policy directly for the active artifact store' \
     'active/authoritative' \
-    'The orchestrator is the sole resolution owner' \
-    'classify declared task intent first' \
-    'one combined row and canonical-model digest' \
-    'RubricConsumerBlockedV1' \
-    'never fall back to rubric `default` or binary `strict_tdd`' \
-    'only when no rubric state has ever been declared or observed.' \
-    'one effective combined instruction to every `sdd-apply` and `sdd-verify` launch' \
+    'caches the canonical policy ONCE per session' \
+    'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' \
+    '`default` ONLY when no non-default row matches' \
+    'union only applicable non-default rows' \
+    "Forward the effective MODE and the policy's exact declared commands, disciplines/evidence, and skill paths" \
+    'without substituting downstream matching rules or policy rewriting' \
+    'Consumer-envelope or compiler diagnostics MUST NOT supersede a valid canonical policy' \
+    'Producer and activation semantics remain owned by `sdd-init`' \
+    'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' \
+    'Binary `strict_tdd` fallback is permitted ONLY when no rubric exists.' \
     'effective MODE is `strict-tdd`' \
-    'The orchestrator is read-only: never generate, mutate, broaden, infer, or select rubric rows'; do
+    'The orchestrator is read-only: never author, generate, mutate, broaden, infer, alter, or rewrite the authoritative policy' \
+    'It may mechanically match existing policy rows using only those declared rules and must never invent commands or evidence.'; do
     grep -Fq "$golden" "$workflow" || fail "Pi semantic golden is missing: $golden" || exit 1
+  done
+  for obsolete in RubricConsumerEnvelopeV1 RubricConsumerBlockedV1 'canonical-model digest' 'state gate' 'Resolve it ONCE per session' 'recovery_action=run '; do
+    ! grep -Fq "$obsolete" "$workflow" || fail "Pi workflow retained obsolete $obsolete" || exit 1
   done
   grep -Fq 'Do not rely on the child agent to discover this independently.' "$workflow" || fail 'Pi binary fallback contract changed' || exit 1
   grep -Fqx '<!-- gentle-ai:pi-rubric-forwarding -->' "$workflow" || fail 'Pi workflow marker opening is missing' || exit 1
@@ -1092,7 +1152,7 @@ test_pi_workflow_rubric_forwarding_contract() (
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
   cmp -s "$workflow" "$after_first" || fail 'second Pi workflow apply was not byte-idempotent' || exit 1
 
-  sed 's/classify declared task intent first/classify stale intent/' "$workflow" > "$stale"
+  sed 's/resolve every distinct apply\/verify work slice AFRESH/resolve stale work slice/' "$workflow" > "$stale"
   cp -- "$stale" "$workflow"
   cp -- "$workflow" "$stale_before"
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$stale_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
@@ -1931,8 +1991,9 @@ run test_claude_missing_anchor
 run test_claude_duplicate_markers
 run test_opencode_stock_and_guarded_noop
 run test_opencode_refuses_custom_body
-run test_rubric_list_replaces_legacy_item4
-run test_runtime_specific_recovery_actions
+run test_rubric_list_migrates_predecessor_item4_and_cache
+run test_rubric_prose_migrates_known_predecessor_exactly
+run test_human_clarification_without_runtime_dispatch
 run test_rubric_list_refuses_ambiguous_headings
 run test_pi_git_only_layout
 run test_pi_npm_only_layout
