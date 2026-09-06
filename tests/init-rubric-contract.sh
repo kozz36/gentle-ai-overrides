@@ -99,11 +99,19 @@ test_policy_contract() (
   local init="$ROOT/deltas/sdd-init-rubric.md" consumer="$ROOT/deltas/rubric-tdd.md"
   assert_project_declared_satisfiability "$init" 'sdd-init delta' || exit 1
   assert_policy_contract "$init" 'sdd-init delta' || exit 1
-  grep -Fq 'RubricConsumerEnvelopeV1' "$consumer" || fail 'consumer lacks the state-gate envelope' || exit 1
-  grep -Fq 'sole resolution owner' "$consumer" || fail 'consumer permits downstream resolution' || exit 1
-  grep -Fq 'RubricConsumerBlockedV1' "$consumer" || fail 'consumer lacks the blocked state-gate envelope' || exit 1
-  grep -Fq 'never fall back to rubric `default` or binary `strict_tdd`' "$consumer" || fail 'consumer permits fallback after rubric observation' || exit 1
-  grep -Fq 'only when no rubric state has ever been declared or observed' "$consumer" || fail 'consumer lacks the legacy boundary' || exit 1
+  grep -Fq 'canonical `sdd-init` authoritative policy directly for the active artifact store' "$consumer" || fail 'consumer does not read canonical policy directly' || exit 1
+  grep -Fq 'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' "$consumer" || fail 'consumer can reuse a first-slice resolution session-wide' || exit 1
+  grep -Fq 'caches the canonical policy ONCE per session' "$consumer" || fail 'consumer does not cache only canonical policy' || exit 1
+  grep -Fq '`default` ONLY when no non-default row matches' "$consumer" || fail 'consumer does not reserve default for unmatched slices' || exit 1
+  grep -Fq 'union only applicable non-default rows' "$consumer" || fail 'consumer unions inapplicable or default rows' || exit 1
+  grep -Fq "Forward the effective MODE and the policy's exact declared commands, disciplines/evidence, and skill paths" "$consumer" || fail 'consumer does not forward effective mode and exact declared policy' || exit 1
+  grep -Fq 'Consumer-envelope or compiler diagnostics MUST NOT supersede a valid canonical policy' "$consumer" || fail 'consumer diagnostics can supersede canonical policy' || exit 1
+  grep -Fq 'Binary `strict_tdd` fallback is permitted ONLY when no rubric exists' "$consumer" || fail 'consumer lacks the no-rubric fallback boundary' || exit 1
+  ! grep -Fq 'Resolve it ONCE per session' "$consumer" || fail 'consumer resolves a first slice only once per session' || exit 1
+  ! grep -Fq 'then caches that resolution' "$consumer" || fail 'consumer caches a slice resolution' || exit 1
+  ! grep -Fq 'recovery_action=run ' "$consumer" || fail 'consumer fabricates runtime recovery dispatch' || exit 1
+  ! grep -Fq 'RubricConsumerEnvelopeV1' "$consumer" || fail 'consumer retains the experimental envelope' || exit 1
+  ! grep -Fq 'RubricConsumerBlockedV1' "$consumer" || fail 'consumer retains the experimental blocked envelope' || exit 1
 )
 
 validate_rubric_tdd_shape() {
@@ -140,19 +148,17 @@ extract_rubric_tdd_shape() {
   [ -s "$out" ] || fail "missing rubric TDD $shape contract"
 }
 
-test_runtime_specific_recovery_contract() (
-  local list="$TMP_ROOT/recovery-list.md" prose="$TMP_ROOT/recovery-prose.md" pi="$TMP_ROOT/recovery-pi.md"
+test_human_clarification_contract() (
+  local list="$TMP_ROOT/clarification-list.md" prose="$TMP_ROOT/clarification-prose.md" pi="$TMP_ROOT/clarification-pi.md" file
   extract_rubric_tdd_shape list-item "$list" || exit 1
   extract_rubric_tdd_shape prose "$prose" || exit 1
   extract_rubric_tdd_shape pi-workflow "$pi" || exit 1
 
-  [ "$(grep -Fxc '   state MUST block apply/verify with `RubricConsumerBlockedV1` and `recovery_action=run /sdd-init recovery`; never fall back to rubric `default` or binary `strict_tdd`. Binary `strict_tdd` is permitted only when no rubric state has ever' "$list")" -eq 1 ] || fail 'list/OpenCode recovery action is not exactly /sdd-init' || exit 1
-  grep -Fq 'recovery_action=run /gentle-sdd-init recovery' "$list" && fail 'list/OpenCode recovery action includes the Claude/Pi command' && exit 1
-  [ "$(grep -Foc 'recovery_action=run /gentle-sdd-init recovery' "$prose")" -eq 1 ] || fail 'Claude prose recovery action is not exactly /gentle-sdd-init' || exit 1
-  grep -Fq 'recovery_action=run /sdd-init recovery' "$prose" && fail 'Claude prose recovery action includes the list/OpenCode command' && exit 1
-  [ "$(grep -Foc 'recovery_action=run /gentle-sdd-init recovery' "$pi")" -eq 1 ] || fail 'Pi workflow recovery action is not exactly /gentle-sdd-init' || exit 1
-  grep -Fq 'recovery_action=run /sdd-init recovery' "$pi" && fail 'Pi workflow recovery action includes the list/OpenCode command' && exit 1
-  :
+  for file in "$list" "$prose" "$pi"; do
+    grep -Fq 'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' "$file" || fail "$(basename -- "$file") does not require human clarification" || exit 1
+    grep -Fq 'do not fabricate runtime recovery dispatch.' "$file" || fail "$(basename -- "$file") permits fabricated recovery dispatch" || exit 1
+    ! grep -Fq 'recovery_action=run ' "$file" || fail "$(basename -- "$file") retains runtime recovery dispatch" || exit 1
+  done
 )
 
 test_opencode_final_sdd_init_contract() (
@@ -183,19 +189,23 @@ test_pi_workflow_consumer_contract() (
   for invariant in \
     '<!-- gentle-ai:pi-rubric-forwarding -->' \
     '<!-- /gentle-ai:pi-rubric-forwarding -->' \
-    'RubricConsumerEnvelopeV1' \
+    'canonical `sdd-init` authoritative policy directly for the active artifact store' \
     'active/authoritative' \
-    'The orchestrator is the sole resolution owner' \
-    'classify declared task intent first' \
-    'one combined row and canonical-model digest' \
-    'RubricConsumerBlockedV1' \
-    'never fall back to rubric `default` or binary `strict_tdd`' \
-    'only when no rubric state has ever been declared or observed.' \
-    'one effective combined instruction to every `sdd-apply` and `sdd-verify` launch' \
+    'caches the canonical policy ONCE per session' \
+    'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' \
+    '`default` ONLY when no non-default row matches' \
+    'union only applicable non-default rows' \
+    "Forward the effective MODE and the policy's exact declared commands, disciplines/evidence, and skill paths" \
+    'without substituting downstream matching rules or policy rewriting' \
+    'Consumer-envelope or compiler diagnostics MUST NOT supersede a valid canonical policy' \
+    'Producer and activation semantics remain owned by `sdd-init`' \
+    'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' \
+    'Binary `strict_tdd` fallback is permitted ONLY when no rubric exists.' \
     'effective MODE is `strict-tdd`' \
     'Gentle AI 2.6.0 with `gentle-pi@2.4.0`' \
     'APPEND_SYSTEM.md remains installer-managed and untouched.' \
-    'The orchestrator is read-only: never generate, mutate, broaden, infer, or select rubric rows'; do
+    'The orchestrator is read-only: never author, generate, mutate, broaden, infer, alter, or rewrite the authoritative policy' \
+    'It may mechanically match existing policy rows using only those declared rules and must never invent commands or evidence.'; do
     grep -Fq "$invariant" "$consumer" || fail "Pi workflow consumer lacks invariant: $invariant" || exit 1
   done
   grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' "$apply" || fail 'Pi workflow host row is not resolver-backed' || exit 1
@@ -265,7 +275,7 @@ run() {
 }
 
 run test_policy_contract
-run test_runtime_specific_recovery_contract
+run test_human_clarification_contract
 run test_opencode_final_sdd_init_contract
 run test_pi_workflow_consumer_contract
 run test_delta_shape_grammar
