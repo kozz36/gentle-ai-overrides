@@ -37,6 +37,34 @@ load_overlay() {
   source "$ROOT/apply.sh"
 }
 
+load_overlay_with_roots() {
+  local home="$1" agent_home="$2" pi_home="$3" backups="$4"
+  HOME="$home"
+  GENTLE_PI_AGENT_HOME="$agent_home"
+  PI_CODING_AGENT_DIR="$pi_home"
+  GENTLE_AI_BACKUP_ROOT="$backups"
+  APPLY_SH_LIB=1
+  export HOME GENTLE_PI_AGENT_HOME PI_CODING_AGENT_DIR GENTLE_AI_BACKUP_ROOT APPLY_SH_LIB
+  # shellcheck source=../apply.sh
+  source "$ROOT/apply.sh"
+}
+
+write_diag_package() {
+  local home="$1" root version="${2:-test}"
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  mkdir -p "$root/assets/agents" "$root/assets/chains" "$root/assets/support"
+  printf '{"name":"gentle-pi","version":"%s"}\n' "$version" > "$root/package.json"
+  printf '%s\n' 'current chain' > "$root/assets/chains/sdd-full.chain.md"
+  write_pi_init_stock > "$root/assets/agents/sdd-init.md"
+  write_pi_workflow_220_fixture > "$root/assets/sdd-orchestrator-workflow.md"
+}
+
+write_diag_manifest() {
+  local home="$1" hash="$2"
+  mkdir -p "$home/.pi/agent/gentle-ai"
+  printf '{"schemaVersion":1,"assets":{"chains/sdd-full.chain.md":"%s"}}\n' "$hash" > "$home/.pi/agent/gentle-ai/managed-assets.json"
+}
+
 test_claude_idempotence_and_backup() (
   local home="$TMP_ROOT/claude-home" backups="$TMP_ROOT/claude-backups" file
   file="$home/.claude/CLAUDE.md"
@@ -1944,6 +1972,279 @@ EOF
   expect_rc 1 init_rubric_apply "$file" skill || exit 1
 )
 
+test_managed_asset_diagnostic() (
+  local home="$TMP_ROOT/diagnostic-home" backups="$TMP_ROOT/diagnostic-backups" root source target manifest output before_source before_target before_manifest hash hash_file expected stale normal check lib_output diagnostic_line transform_line
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  source="$root/assets/chains/sdd-full.chain.md"
+  target="$home/.pi/agent/chains/sdd-full.chain.md"
+  manifest="$home/.pi/agent/gentle-ai/managed-assets.json"
+  output="$TMP_ROOT/diagnostic.out"
+  normal="$TMP_ROOT/diagnostic-normal.out"
+  check="$TMP_ROOT/diagnostic-check.out"
+  lib_output="$TMP_ROOT/diagnostic-lib.out"
+  before_source="$TMP_ROOT/diagnostic-before-source"
+  before_target="$TMP_ROOT/diagnostic-before-target"
+  before_manifest="$TMP_ROOT/diagnostic-before-manifest"
+  write_diag_package "$home"
+  mkdir -p "$(dirname -- "$target")" "$home/.pi/agent/agents" "$home/.gentle-ai"
+  cp -- "$source" "$target"
+  printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+  printf '\n' > "$home/.pi/agent/APPEND_SYSTEM.md"
+
+  load_overlay "$home" "$backups"
+  hash="$(asset_sha256 "$source")"
+  write_diag_manifest "$home" "$hash"
+  cp -- "$source" "$before_source"
+  cp -- "$target" "$before_target"
+  cp -- "$manifest" "$before_manifest"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'CURRENT-MANAGED chains/sdd-full.chain.md' "$output" || fail 'current managed asset was not reported' || exit 1
+  cmp -s "$source" "$before_source" || fail 'diagnostic changed package input' || exit 1
+  cmp -s "$target" "$before_target" || fail 'diagnostic changed installed input' || exit 1
+  cmp -s "$manifest" "$before_manifest" || fail 'diagnostic changed manifest input' || exit 1
+
+  # The published hash has no offline fixture preimage; exercise the pure classifier, then hash real bytes below.
+  stale="$(asset_state chains/sdd-full.chain.md "$hash" 398f105e58b36fb169617257f4fc55b8bebdd5d26ddcb8b01556aed8dec0c0b "$hash" '')"
+  printf '%s\n' "$stale" | grep -Fq 'KNOWN-OBSOLETE' || fail 'published exact stale hash was not classified' || exit 1
+  hash_file="$TMP_ROOT/diagnostic-hash-input"
+  printf '%s\n' 'hashable' > "$hash_file"
+  expected="$(sha256sum "$hash_file" 2>/dev/null || shasum -a 256 "$hash_file")"
+  expected="${expected%% *}"
+  [ "$(asset_sha256 "$hash_file")" = "$expected" ] || fail 'diagnostic hash helper did not hash fixture bytes' || exit 1
+
+  env -u APPLY_SH_LIB HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" > "$normal" || exit 1
+  [ "$(grep -Fc 'managed-asset diagnostic' "$normal")" -eq 1 ] || fail 'normal apply emitted duplicate diagnostic output' || exit 1
+  diagnostic_line="$(grep -n 'managed-asset diagnostic' "$normal" | cut -d: -f1)"
+  transform_line="$(grep -n 'sdd-init-rubric.*agents/sdd-init.md' "$normal" | cut -d: -f1)"
+  [ "$diagnostic_line" -lt "$transform_line" ] || fail 'diagnostic did not precede overlay transform' || exit 1
+  cmp -s "$source" "$before_source" || fail 'normal apply changed package diagnostic input' || exit 1
+  cmp -s "$target" "$before_target" || fail 'normal apply changed installed diagnostic input' || exit 1
+  cmp -s "$manifest" "$before_manifest" || fail 'normal apply changed manifest diagnostic input' || exit 1
+
+  env -u APPLY_SH_LIB HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check > "$check"
+  [ "$?" -eq 0 ] || fail 'expected clean diagnostic --check exit 0' || exit 1
+  [ "$(grep -Fc 'managed-asset diagnostic' "$check")" -eq 1 ] || fail '--check emitted duplicate diagnostic output' || exit 1
+  cmp -s "$source" "$before_source" || fail '--check changed package diagnostic input' || exit 1
+  cmp -s "$target" "$before_target" || fail '--check changed installed diagnostic input' || exit 1
+  cmp -s "$manifest" "$before_manifest" || fail '--check changed manifest diagnostic input' || exit 1
+  env -u GENTLE_PI_AGENT_HOME -u PI_CODING_AGENT_DIR HOME="$home" APPLY_SH_LIB=1 bash -c 'source "$1"' _ "$ROOT/apply.sh" > "$lib_output"
+  [ ! -s "$lib_output" ] || fail 'library sourcing emitted diagnostic output' || exit 1
+
+  home="$TMP_ROOT/diagnostic-unowned-home"
+  write_diag_package "$home"
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  source="$root/assets/chains/sdd-full.chain.md"
+  target="$home/.pi/agent/chains/sdd-full.chain.md"
+  mkdir -p "$(dirname -- "$target")" "$home/.pi/agent/agents"
+  cp -- "$source" "$target"
+  printf '%s\n' '---' 'model: source-model' '---' 'agent body' > "$root/assets/agents/sdd-apply.md"
+  printf '%s\n' '---' 'model: routed-model' '---' 'agent body' > "$home/.pi/agent/agents/sdd-apply.md"
+  mkdir -p "$home/.pi/agent/gentle-ai"
+  printf '%s\n' '{"schemaVersion":1,"assets":{}}' > "$home/.pi/agent/gentle-ai/managed-assets.json"
+  load_overlay "$home" "$TMP_ROOT/diagnostic-unowned-backups"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'CURRENT-UNMANAGED chains/sdd-full.chain.md' "$output" || fail 'current unowned asset was not reported' || exit 1
+  grep -Fq 'CUSTOMIZED-UNKNOWN agents/sdd-apply.md' "$output" || fail 'model-frontmatter difference was falsely stale' || exit 1
+  grep -Fq 'routing/model rendering can differ' "$output" || fail 'agent routing uncertainty was not explained' || exit 1
+
+  home="$TMP_ROOT/diagnostic-malformed-home"
+  write_diag_package "$home"
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  source="$root/assets/chains/sdd-full.chain.md"
+  target="$home/.pi/agent/chains/sdd-full.chain.md"
+  mkdir -p "$(dirname -- "$target")" "$home/.pi/agent/gentle-ai" "$root/assets/migrations"
+  printf '%s\n' 'unknown edit' > "$target"
+  printf '%s\n' '{"schemaVersion":1,"assets":{"../../unsafe":"not-a-hash"}}' > "$home/.pi/agent/gentle-ai/managed-assets.json"
+  printf '%s\n' '{"schemaVersion":1,"packageVersion":"old","assets":{"chains/sdd-full.chain.md":"not-a-hash"}}' > "$root/assets/migrations/bad.json"
+  load_overlay "$home" "$TMP_ROOT/diagnostic-malformed-backups"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'MALFORMED managed-assets.json' "$output" || fail 'unsafe manifest entry was not rejected' || exit 1
+  grep -Fq 'MALFORMED migration registry bad.json' "$output" || fail 'unsafe migration hash was not rejected' || exit 1
+  grep -Fq 'CUSTOMIZED-UNKNOWN chains/sdd-full.chain.md' "$output" || fail 'unknown edit was called stale' || exit 1
+
+  home="$TMP_ROOT/diagnostic-missing-home"
+  write_diag_package "$home"
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  source="$root/assets/chains/sdd-full.chain.md"
+  target="$home/.pi/agent/chains/sdd-full.chain.md"
+  mkdir -p "$(dirname -- "$target")" "$home/.pi/agent/gentle-ai"
+  cp -- "$source" "$target"
+  load_overlay "$home" "$TMP_ROOT/diagnostic-missing-backups"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'MISSING managed-assets.json' "$output" || fail 'missing manifest was not reported' || exit 1
+  grep -Fq 'CURRENT-UNMANAGED chains/sdd-full.chain.md' "$output" || fail 'missing metadata hid current unowned asset' || exit 1
+  hash="$(asset_sha256 "$source")"
+  printf '{"schemaVersion":1,"assets":{"chains/sdd-plan.chain.md":"%s"}}\n' "$hash" > "$home/.pi/agent/gentle-ai/managed-assets.json"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'MISSING chains/sdd-plan.chain.md' "$output" || fail 'manifest asset missing from package was not reported' || exit 1
+
+  home="$TMP_ROOT/diagnostic-no-package-home"
+  mkdir -p "$home/.pi/agent"
+  load_overlay "$home" "$TMP_ROOT/diagnostic-no-package-backups"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'MISSING gentle-pi package.json' "$output" || fail 'missing package identity was not reported' || exit 1
+
+  home="$TMP_ROOT/diagnostic-package-home"
+  mkdir -p "$home/.pi/agent/npm/node_modules/gentle-pi"
+  printf '%s\n' '{bad package' > "$home/.pi/agent/npm/node_modules/gentle-pi/package.json"
+  load_overlay "$home" "$TMP_ROOT/diagnostic-package-backups"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'MALFORMED gentle-pi package.json' "$output" || fail 'malformed package identity was not reported' || exit 1
+)
+
+test_managed_asset_diagnostic_defects() (
+  local home="$TMP_ROOT/diagnostic-defects-home" backups="$TMP_ROOT/diagnostic-defects-backups" root source target manifest output error hash value outside preferred default pi_home
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  source="$root/assets/chains/sdd-full.chain.md"
+  target="$home/.pi/agent/chains/sdd-full.chain.md"
+  manifest="$home/.pi/agent/gentle-ai/managed-assets.json"
+  output="$TMP_ROOT/diagnostic-defects.out"
+  error="$TMP_ROOT/diagnostic-defects.err"
+  write_diag_package "$home"
+  mkdir -p "$(dirname -- "$target")" "$(dirname -- "$manifest")"
+  cp -- "$source" "$target"
+  load_overlay "$home" "$backups"
+  hash="$(asset_sha256 "$source")"
+
+  for value in '{"bad":"type"}' '[]' 'null' '7'; do
+    printf '{"schemaVersion":1,"assets":{"chains/sdd-full.chain.md":%s}}\n' "$value" > "$manifest"
+    managed_asset_diagnostic > "$output" 2> "$error"
+    grep -Fq 'MALFORMED managed-assets.json' "$output" || fail "non-string manifest value $value was accepted" || exit 1
+    ! grep -Fq 'CURRENT-UNMANAGED chains/sdd-full.chain.md' "$output" || fail "non-string manifest value $value reached ownership lookup" || exit 1
+    [ ! -s "$error" ] || fail "non-string manifest value $value emitted jq diagnostics" || exit 1
+  done
+
+  printf '{"schemaVersion":1,"assets":{"chains/sdd-full.chain.md":"%s"}}\n' "$hash" > "$manifest"
+  mkdir -p "$root/assets/migrations"
+  printf '%s\n' '{"schemaVersion":1,"packageVersion":"old","assets":{"chains/sdd-full.chain.md":{"bad":"type"}}}' > "$root/assets/migrations/bad.json"
+  managed_asset_diagnostic > "$output" 2> "$error"
+  grep -Fq 'MALFORMED migration registry bad.json' "$output" || fail 'non-string registry value was accepted' || exit 1
+  [ ! -s "$error" ] || fail 'non-string registry value emitted jq diagnostics' || exit 1
+
+  outside="$TMP_ROOT/diagnostic-linked-outside"
+  mkdir -p "$outside"
+  ln -s "$target" "$root/assets/chains/linked.md"
+  ln -s "$outside" "$root/assets/chains/linked-dir"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'UNAVAILABLE chains/linked.md' "$output" || fail 'source file symlink was skipped' || exit 1
+  grep -Fq 'UNAVAILABLE chains/linked-dir' "$output" || fail 'source directory symlink was skipped' || exit 1
+  ! grep -Fq 'CURRENT-MANAGED chains/linked.md' "$output" || fail 'source symlink was classified as current' || exit 1
+
+  home="$TMP_ROOT/diagnostic-installed-link-home"
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  source="$root/assets/chains/sdd-full.chain.md"
+  target="$home/.pi/agent/chains/sdd-full.chain.md"
+  manifest="$home/.pi/agent/gentle-ai/managed-assets.json"
+  write_diag_package "$home"
+  mkdir -p "$(dirname -- "$target")" "$(dirname -- "$manifest")"
+  ln -s "$outside" "$target"
+  load_overlay "$home" "$TMP_ROOT/diagnostic-installed-link-backups"
+  hash="$(asset_sha256 "$source")"
+  printf '{"schemaVersion":1,"assets":{"chains/sdd-full.chain.md":"%s"}}\n' "$hash" > "$manifest"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'UNAVAILABLE chains/sdd-full.chain.md' "$output" || fail 'installed symlink was not reported' || exit 1
+
+  home="$TMP_ROOT/diagnostic-installed-nested-link-home"
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  source="$root/assets/chains/nested/current.md"
+  target="$home/.pi/agent/chains/nested/current.md"
+  manifest="$home/.pi/agent/gentle-ai/managed-assets.json"
+  write_diag_package "$home"
+  mkdir -p "$(dirname -- "$source")" "$(dirname -- "$manifest")" "$outside/nested-target"
+  printf '%s\n' 'nested source' > "$source"
+  cp -- "$source" "$outside/nested-target/current.md"
+  mkdir -p "$home/.pi/agent/chains"
+  ln -s "$outside/nested-target" "$home/.pi/agent/chains/nested"
+  load_overlay "$home" "$TMP_ROOT/diagnostic-installed-nested-link-backups"
+  hash="$(asset_sha256 "$source")"
+  printf '{"schemaVersion":1,"assets":{"chains/nested/current.md":"%s"}}\n' "$hash" > "$manifest"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'UNAVAILABLE chains/nested/current.md' "$output" || fail 'installed nested symlink was not reported' || exit 1
+  ! grep -Fq 'CURRENT-MANAGED chains/nested/current.md' "$output" || fail 'installed nested symlink was read as current' || exit 1
+
+  default="$TMP_ROOT/diagnostic-default-root"
+  preferred="$TMP_ROOT/diagnostic-preferred-root"
+  pi_home="$TMP_ROOT/diagnostic-pi-root"
+  write_diag_package "$default" default
+  mkdir -p "$preferred/.pi/agent/npm/node_modules/gentle-pi"
+  printf '%s\n' '{broken' > "$preferred/.pi/agent/npm/node_modules/gentle-pi/package.json"
+  load_overlay_with_roots "$default" "$preferred/.pi/agent" '' "$TMP_ROOT/diagnostic-locator-backups"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'MALFORMED gentle-pi package.json' "$output" || fail 'malformed preferred package fell back to default' || exit 1
+  ! grep -Fq 'verified gentle-pi@default' "$output" || fail 'malformed preferred package mixed roots' || exit 1
+
+  preferred="$TMP_ROOT/diagnostic-preferred-valid-root"
+  write_diag_package "$preferred" preferred
+  load_overlay_with_roots "$default" "$preferred/.pi/agent" '' "$TMP_ROOT/diagnostic-locator-valid-backups"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'SOURCE verified gentle-pi@preferred' "$output" || fail 'valid preferred package was not selected' || exit 1
+  ! grep -Fq 'verified gentle-pi@default' "$output" || fail 'valid preferred package mixed roots' || exit 1
+
+  preferred="$TMP_ROOT/diagnostic-preferred-missing-root"
+  write_diag_package "$pi_home" pi-root
+  load_overlay_with_roots "$default" "$preferred/.pi/agent" "$pi_home/.pi/agent" "$TMP_ROOT/diagnostic-locator-missing-backups"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'SOURCE verified gentle-pi@pi-root' "$output" || fail 'missing preferred package did not use Pi canonical root' || exit 1
+  ! grep -Fq 'verified gentle-pi@default' "$output" || fail 'missing preferred package skipped Pi canonical root' || exit 1
+)
+
+test_managed_asset_diagnostic_incomplete_inventory() (
+  local home="$TMP_ROOT/diagnostic-incomplete-home" backups="$TMP_ROOT/diagnostic-incomplete-backups" root source target manifest output error hash mode_zero no_execute fifo bin real_find
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  source="$root/assets/chains/sdd-full.chain.md"
+  target="$home/.pi/agent/chains/sdd-full.chain.md"
+  manifest="$home/.pi/agent/gentle-ai/managed-assets.json"
+  output="$TMP_ROOT/diagnostic-incomplete.out"
+  error="$TMP_ROOT/diagnostic-incomplete.err"
+  write_diag_package "$home"
+  mkdir -p "$(dirname -- "$target")" "$(dirname -- "$manifest")"
+  cp -- "$source" "$target"
+  load_overlay "$home" "$backups"
+  hash="$(asset_sha256 "$source")"
+  printf '{"schemaVersion":1,"assets":{"chains/sdd-full.chain.md":"%s"}}\n' "$hash" > "$manifest"
+
+  mode_zero="$root/assets/chains/mode-zero"
+  no_execute="$root/assets/chains/no-execute"
+  fifo="$root/assets/chains/special.md"
+  mkdir -p "$mode_zero" "$no_execute"
+  printf '%s\n' 'hidden' > "$mode_zero/hidden.md"
+  printf '%s\n' 'hidden' > "$no_execute/hidden.md"
+  mkfifo "$fifo"
+  trap 'chmod 755 "$mode_zero" "$no_execute" 2>/dev/null || true' EXIT
+  chmod 000 "$mode_zero"
+  chmod 600 "$no_execute"
+  managed_asset_diagnostic > "$output" 2> "$error"
+  if [ ! -r "$mode_zero" ] || [ ! -x "$mode_zero" ] || [ ! -x "$no_execute" ]; then
+    grep -Fq 'UNAVAILABLE package assets/chains (source inventory incomplete)' "$output" || fail 'unreadable nested directory was silently omitted' || exit 1
+    ! grep -Fq 'CURRENT-MANAGED chains/sdd-full.chain.md' "$output" || fail 'incomplete chains inventory claimed current' || exit 1
+  fi
+  chmod 755 "$mode_zero" "$no_execute"
+  managed_asset_diagnostic > "$output" 2> "$error"
+  grep -Fq 'UNAVAILABLE chains/special.md' "$output" || fail 'FIFO source entry was not reported without reading it' || exit 1
+  [ ! -s "$error" ] || fail 'source inventory emitted raw stderr' || exit 1
+
+  bin="$TMP_ROOT/diagnostic-find-bin"
+  real_find="$(command -v find)"
+  mkdir -p "$bin"
+  cat > "$bin/find" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "$DIAG_FIND_FAIL_DIR" ]; then exit 1; fi
+exec "$DIAG_REAL_FIND" "$@"
+EOF
+  chmod 755 "$bin/find"
+  (
+    PATH="$bin:$PATH"
+    DIAG_REAL_FIND="$real_find"
+    DIAG_FIND_FAIL_DIR="$root/assets/chains"
+    export PATH DIAG_REAL_FIND DIAG_FIND_FAIL_DIR
+    managed_asset_diagnostic
+  ) > "$output" 2> "$error"
+  grep -Fq 'UNAVAILABLE package assets/chains (source inventory incomplete)' "$output" || fail 'controlled find failure was not reported' || exit 1
+  ! grep -Fq 'CURRENT-MANAGED chains/sdd-full.chain.md' "$output" || fail 'controlled incomplete inventory claimed current' || exit 1
+  ! grep -Fq 'MISSING chains/sdd-full.chain.md (manifest ownership has no current package asset)' "$output" || fail 'controlled incomplete inventory was mislabeled missing' || exit 1
+  [ ! -s "$error" ] || fail 'controlled find failure emitted raw stderr' || exit 1
+)
+
 test_init_rubric_refuses_ambiguous_or_partial_shapes() (
   local home="$TMP_ROOT/init-refusal-home" backups="$TMP_ROOT/init-refusal-backups" skill details pi duplicate before
   skill="$home/.config/opencode/skills/sdd-init/SKILL.md"
@@ -2036,6 +2337,9 @@ run test_init_rubric_refuses_anchor_inside_managed_section
 run test_init_rubric_shared_skill_idempotence_and_backup
 run test_init_rubric_reference_and_pi_idempotence
 run test_init_rubric_replaces_complete_section
+run test_managed_asset_diagnostic
+run test_managed_asset_diagnostic_defects
+run test_managed_asset_diagnostic_incomplete_inventory
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
 run test_neutral_external_profile_lifecycle
 run test_fresh_260_active_layout_lifecycle
