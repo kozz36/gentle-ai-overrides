@@ -2245,6 +2245,122 @@ EOF
   [ ! -s "$error" ] || fail 'controlled find failure emitted raw stderr' || exit 1
 )
 
+test_managed_asset_diagnostic_rejects_unsafe_package_metadata() (
+  local home backups root metadata output error kind rc socket_pid
+  command -v timeout >/dev/null 2>&1 || fail 'timeout is required for package metadata FIFO coverage' || exit 1
+  for kind in fifo directory socket unreadable; do
+    if [ "$kind" = socket ]; then home="$TMP_ROOT/p"; else home="$TMP_ROOT/diagnostic-package-$kind-home"; fi
+    backups="$TMP_ROOT/diagnostic-package-$kind-backups"
+    root="$home/.pi/agent/npm/node_modules/gentle-pi"
+    metadata="$root/package.json"
+    output="$TMP_ROOT/diagnostic-package-$kind.out"
+    error="$TMP_ROOT/diagnostic-package-$kind.err"
+    write_diag_package "$home"
+    mv -- "$metadata" "$root/package.real"
+    case "$kind" in
+      fifo) mkfifo "$metadata" ;;
+      directory) mkdir "$metadata" ;;
+      socket)
+        command -v python3 >/dev/null 2>&1 || fail 'python3 is required for package metadata socket coverage' || exit 1
+        python3 - "$metadata" <<'PY' &
+import socket
+import sys
+import time
+socket_file = socket.socket(socket.AF_UNIX)
+socket_file.bind(sys.argv[1])
+time.sleep(2)
+PY
+        socket_pid=$!
+        for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$metadata" ] && break; sleep 0.1; done
+        [ -S "$metadata" ] || fail 'package metadata socket was not created' || exit 1
+        ;;
+      unreadable) : > "$metadata"; chmod 000 "$metadata"; [ ! -r "$metadata" ] || continue ;;
+    esac
+    timeout 2 env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=1 bash -c 'source "$1"; managed_asset_diagnostic' _ "$ROOT/apply.sh" > "$output" 2> "$error"
+    rc=$?
+    [ "$rc" -eq 0 ] || fail "$kind package metadata diagnostic returned $rc" || exit 1
+    grep -Fq 'UNAVAILABLE gentle-pi package.json' "$output" || fail "$kind package metadata was not unavailable" || exit 1
+    [ ! -s "$error" ] || fail "$kind package metadata emitted raw stderr" || exit 1
+    [ "${socket_pid:-}" = '' ] || { wait "$socket_pid"; socket_pid=''; }
+    if [ "$kind" = fifo ]; then
+      mkdir -p "$home/.gentle-ai"
+      printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+      printf '\n' > "$home/.pi/agent/APPEND_SYSTEM.md"
+      timeout 2 env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check > "$output" 2> "$error"
+      rc=$?
+      [ "$rc" -eq 2 ] || fail "FIFO package metadata check returned $rc" || exit 1
+      timeout 2 env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" > "$output" 2> "$error"
+      rc=$?
+      [ "$rc" -eq 0 ] || fail "FIFO package metadata apply returned $rc" || exit 1
+    fi
+  done
+)
+
+test_managed_asset_diagnostic_rejects_forged_package_identity() (
+  local home="$TMP_ROOT/diagnostic-package-identity-home" backups="$TMP_ROOT/diagnostic-package-identity-backups"
+  local root metadata output="$TMP_ROOT/diagnostic-package-identity.out" error="$TMP_ROOT/diagnostic-package-identity.err" value
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  metadata="$root/package.json"
+  write_diag_package "$home"
+  printf '%s\n' '{"name":"gentle-pi","version":"outside"}' > "$TMP_ROOT/diagnostic-package-outside.json"
+  mv -- "$metadata" "$root/package.real"
+  ln -s "$TMP_ROOT/diagnostic-package-outside.json" "$metadata"
+  load_overlay "$home" "$backups"
+  managed_asset_diagnostic > "$output" 2> "$error"
+  grep -Fq 'UNAVAILABLE gentle-pi package.json' "$output" || fail 'symlinked package metadata was read' || exit 1
+  ! grep -Fq 'verified gentle-pi@outside' "$output" || fail 'symlinked package metadata forged a source version' || exit 1
+  [ ! -s "$error" ] || fail 'symlinked package metadata emitted raw stderr' || exit 1
+
+  home="$TMP_ROOT/diagnostic-package-forged-home"
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  metadata="$root/package.json"
+  write_diag_package "$home"
+  load_overlay "$home" "$TMP_ROOT/diagnostic-package-forged-backups"
+  for value in 'ok\nCURRENT-MANAGED forged' 'ok\tCURRENT-MANAGED forged' 'ok\u001b[31mCURRENT-MANAGED forged'; do
+    printf '{"name":"gentle-pi","version":"%s"}\n' "$value" > "$metadata"
+    managed_asset_diagnostic > "$output" 2> "$error"
+    grep -Fq 'MALFORMED gentle-pi package.json' "$output" || fail "forged package version $value was accepted" || exit 1
+    ! grep -Fq 'CURRENT-MANAGED forged' "$output" || fail "forged package version $value injected a diagnostic line" || exit 1
+    [ ! -s "$error" ] || fail "forged package version $value emitted raw stderr" || exit 1
+  done
+  printf '%s\n' '{"name":"gentle-pi","version":"2.5.0-rc.1+build.7"}' > "$metadata"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'SOURCE verified gentle-pi@2.5.0-rc.1+build.7' "$output" || fail 'valid prerelease/build package version was rejected' || exit 1
+)
+
+test_managed_asset_diagnostic_respects_configured_package_root() (
+  local home="$TMP_ROOT/diagnostic-configured-root-home" backups="$TMP_ROOT/diagnostic-configured-root-backups"
+  local npm git output="$TMP_ROOT/diagnostic-configured-root.out" error="$TMP_ROOT/diagnostic-configured-root.err" stale="$TMP_ROOT/diagnostic-configured-stale-npm"
+  npm="$home/.pi/agent/npm/node_modules/gentle-pi"
+  git="$home/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi"
+  write_diag_package "$home" stale-npm
+  mkdir -p "$git"
+  cp -R -- "$npm/assets" "$git/assets"
+  printf '%s\n' '{"name":"gentle-pi","version":"configured-git"}' > "$git/package.json"
+  write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
+  load_overlay "$home" "$backups"
+  managed_asset_diagnostic > "$output" 2> "$error"
+  grep -Fq 'SOURCE verified gentle-pi@configured-git' "$output" || fail 'configured git package did not beat stale npm metadata' || exit 1
+  ! grep -Fq 'verified gentle-pi@stale-npm' "$output" || fail 'configured git diagnostic mixed package roots' || exit 1
+  [ ! -s "$error" ] || fail 'configured git package emitted raw stderr' || exit 1
+
+  mv -- "$npm" "$stale"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'SOURCE verified gentle-pi@configured-git' "$output" || fail 'configured git-only package was not discovered' || exit 1
+
+  mv -- "$stale" "$npm"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.5.0"]}'
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'SOURCE verified gentle-pi@stale-npm' "$output" || fail 'configured npm package was not selected' || exit 1
+  ! grep -Fq 'verified gentle-pi@configured-git' "$output" || fail 'configured npm diagnostic mixed package roots' || exit 1
+
+  write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
+  printf '%s\n' '{bad package' > "$git/package.json"
+  managed_asset_diagnostic > "$output"
+  grep -Fq 'MALFORMED gentle-pi package.json' "$output" || fail 'malformed configured package was not rejected' || exit 1
+  ! grep -Fq 'verified gentle-pi@stale-npm' "$output" || fail 'malformed configured package fell back to npm' || exit 1
+)
+
 test_init_rubric_refuses_ambiguous_or_partial_shapes() (
   local home="$TMP_ROOT/init-refusal-home" backups="$TMP_ROOT/init-refusal-backups" skill details pi duplicate before
   skill="$home/.config/opencode/skills/sdd-init/SKILL.md"
@@ -2340,6 +2456,9 @@ run test_init_rubric_replaces_complete_section
 run test_managed_asset_diagnostic
 run test_managed_asset_diagnostic_defects
 run test_managed_asset_diagnostic_incomplete_inventory
+run test_managed_asset_diagnostic_rejects_unsafe_package_metadata
+run test_managed_asset_diagnostic_rejects_forged_package_identity
+run test_managed_asset_diagnostic_respects_configured_package_root
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
 run test_neutral_external_profile_lifecycle
 run test_fresh_260_active_layout_lifecycle
