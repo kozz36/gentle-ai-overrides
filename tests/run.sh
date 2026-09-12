@@ -2361,6 +2361,30 @@ test_managed_asset_diagnostic_respects_configured_package_root() (
   ! grep -Fq 'verified gentle-pi@stale-npm' "$output" || fail 'malformed configured package fell back to npm' || exit 1
 )
 
+test_managed_asset_diagnostic_marks_skipped_source_scope_unavailable() (
+  local home="$TMP_ROOT/diagnostic-skipped-source-home" backups="$TMP_ROOT/diagnostic-skipped-source-backups"
+  local root manifest output="$TMP_ROOT/diagnostic-skipped-source.out" error="$TMP_ROOT/diagnostic-skipped-source.err" outside="$TMP_ROOT/diagnostic-skipped-source-outside" hash
+  root="$home/.pi/agent/npm/node_modules/gentle-pi"
+  manifest="$home/.pi/agent/gentle-ai/managed-assets.json"
+  write_diag_package "$home"
+  load_overlay "$home" "$backups"
+  hash="$(asset_sha256 "$root/assets/chains/sdd-full.chain.md")"
+  mkdir -p "$(dirname -- "$manifest")" "$outside"
+  ln -s "$outside" "$root/assets/chains/linked.md"
+  ln -s "$outside" "$root/assets/chains/linked-dir"
+  mkfifo "$root/assets/chains/special.md"
+  printf '{"schemaVersion":1,"assets":{"chains/linked.md":"%s","chains/linked-dir/child.md":"%s","chains/special.md":"%s","chains/regular-missing.md":"%s"}}\n' "$hash" "$hash" "$hash" "$hash" > "$manifest"
+  managed_asset_diagnostic > "$output" 2> "$error"
+  grep -Fq 'UNAVAILABLE chains/linked.md' "$output" || fail 'source file symlink was not unavailable' || exit 1
+  ! grep -Fq 'MISSING chains/linked.md' "$output" || fail 'source file symlink was mislabeled missing' || exit 1
+  grep -Fq 'UNAVAILABLE chains/linked-dir/child.md' "$output" || fail 'source directory symlink child was not unavailable' || exit 1
+  ! grep -Fq 'MISSING chains/linked-dir/child.md' "$output" || fail 'source directory symlink child was mislabeled missing' || exit 1
+  grep -Fq 'UNAVAILABLE chains/special.md' "$output" || fail 'source FIFO was not unavailable' || exit 1
+  ! grep -Fq 'MISSING chains/special.md' "$output" || fail 'source FIFO was mislabeled missing' || exit 1
+  grep -Fq 'MISSING chains/regular-missing.md' "$output" || fail 'regular missing source was not reported missing' || exit 1
+  [ ! -s "$error" ] || fail 'skipped source inventory emitted raw stderr' || exit 1
+)
+
 test_init_rubric_refuses_ambiguous_or_partial_shapes() (
   local home="$TMP_ROOT/init-refusal-home" backups="$TMP_ROOT/init-refusal-backups" skill details pi duplicate before
   skill="$home/.config/opencode/skills/sdd-init/SKILL.md"
@@ -2459,6 +2483,7 @@ run test_managed_asset_diagnostic_incomplete_inventory
 run test_managed_asset_diagnostic_rejects_unsafe_package_metadata
 run test_managed_asset_diagnostic_rejects_forged_package_identity
 run test_managed_asset_diagnostic_respects_configured_package_root
+run test_managed_asset_diagnostic_marks_skipped_source_scope_unavailable
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
 run test_neutral_external_profile_lifecycle
 run test_fresh_260_active_layout_lifecycle
