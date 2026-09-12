@@ -1155,7 +1155,8 @@ test_pi_workflow_rubric_forwarding_contract() (
     'caches the canonical policy ONCE per session' \
     'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' \
     '`default` ONLY when no non-default row matches' \
-    'union only applicable non-default rows' \
+    'Policy-defined matching, precedence, and exceptions govern each slice.' \
+    'If the canonical policy explicitly declares `all-rows` with `strictest-wins` and evidence union, use that declared resolution; otherwise use its declared resolution.' \
     "Forward the effective MODE and the policy's exact declared commands, disciplines/evidence, and skill paths" \
     'without substituting downstream matching rules or policy rewriting' \
     'Consumer-envelope or compiler diagnostics MUST NOT supersede a valid canonical policy' \
