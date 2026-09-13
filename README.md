@@ -84,6 +84,33 @@ matches a known structure. After upgrading Gentle AI:
 2. Review any `ANCHOR-NOT-FOUND` result against the new upstream template.
 3. Update and test the matching transform before applying it.
 
+### Regression test prerequisites
+
+The regression suite requires `jq`, Node.js, Python 3, and GNU coreutils
+`timeout`. `jq` is an existing runtime dependency; Node.js is used by the
+runtime Pi settings-parser fallback. Python 3 and GNU `timeout` are additional
+test-only prerequisites. `apply.sh` does not install these dependencies.
+Missing test prerequisites fail the suite rather than skip coverage.
+Python 3 is used only for the synchronous relative Unix-domain socket fixture.
+
+On macOS, install GNU coreutils and expose its unprefixed tools before running
+the suite; Homebrew otherwise names the binary `gtimeout` outside this path:
+
+```sh
+brew install coreutils jq shellcheck
+export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
+```
+
+The GNU timeout regression calls `timeout -k 0.2 2`. It passes the command's
+arguments, environment, standard output, and standard error through unchanged;
+normal `0` and `2` exits remain unchanged. A cooperative deadline returns `124`.
+If the command ignores `TERM`, GNU timeout's kill-after path returns `137`.
+That assertion is status-only: PID existence alone cannot distinguish a live
+process from a zombie awaiting reaping. The suite explicitly cleans up its own
+FIFO fixtures, but does not claim that a leader's normal exit cleans descendants
+or that external `SIGTERM` produces
+`143` with descendant cleanup.
+
 The regression suite runs on Ubuntu and macOS:
 
 ```sh

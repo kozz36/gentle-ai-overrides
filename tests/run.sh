@@ -2247,92 +2247,52 @@ EOF
 )
 
 test_managed_asset_diagnostic_rejects_unsafe_package_metadata() (
-  local home backups root metadata output error kind rc fifo_reader fifo_reader_pid fifo_reader_terminated
-  command -v python3 >/dev/null 2>&1 || fail 'python3 is required for package metadata FIFO coverage' || exit 1
+  local home backups root metadata output error kind rc fifo_reader fifo_reader_terminated
 
-  run_with_watchdog() {
-    local stdout_path="$1" stderr_path="$2"
-    shift 2
-    python3 - "$stdout_path" "$stderr_path" "$@" <<'PY'
-import os
-import signal
-import subprocess
-import sys
-import time
+  command -v python3 >/dev/null 2>&1 || fail 'python3 is required for package metadata socket coverage' || exit 1
+  command -v timeout >/dev/null 2>&1 || fail 'GNU coreutils timeout is required for this test suite' || exit 1
+  timeout --version 2>&1 | grep -Fq 'GNU coreutils' || fail 'timeout must be GNU coreutils timeout' || exit 1
 
-stdout_path, stderr_path = sys.argv[1:3]
-child = None
-
-def stop_child():
-    if child is None:
-        return
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(child.pid, sig)
-        except ProcessLookupError:
-            break
-        time.sleep(.1)
-    try:
-        child.wait(timeout=.2)
-    except subprocess.TimeoutExpired:
-        pass
-
-signal.signal(signal.SIGTERM, lambda signum, _frame: sys.exit(128 + signum))
-try:
-    with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
-        deadline = time.monotonic() + 2
-        child = subprocess.Popen(
-            sys.argv[3:], env=os.environ.copy(), stdout=stdout, stderr=stderr,
-            start_new_session=True)
-        try:
-            rc = child.wait(timeout=max(0, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            rc = 124
-finally:
-    stop_child()
-sys.exit(rc)
-PY
+  run_with_timeout() {
+    timeout -k 0.2 2 "$@"
   }
 
+  run_with_timeout bash -c 'exit 0'
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "GNU timeout did not preserve exit 0: $rc" || exit 1
+  output="$TMP_ROOT/diagnostic-timeout.out"
+  error="$TMP_ROOT/diagnostic-timeout.err"
+  GNU_TIMEOUT_TEST_TOKEN=preserved
+  export GNU_TIMEOUT_TEST_TOKEN
+  run_with_timeout bash -c '
+    [ "$1" = "argv value" ] && [ "$GNU_TIMEOUT_TEST_TOKEN" = preserved ] || exit 9
+    printf stdout
+    printf stderr >&2
+    exit 2
+  ' _ 'argv value' > "$output" 2> "$error"
+  rc=$?
+  [ "$rc" -eq 2 ] || fail "GNU timeout did not preserve exit 2: $rc" || exit 1
+  [ "$(cat "$output")" = stdout ] || fail 'GNU timeout changed command stdout' || exit 1
+  [ "$(cat "$error")" = stderr ] || fail 'GNU timeout changed command stderr' || exit 1
+
   fifo_reader="$TMP_ROOT/diagnostic-package-blocked.fifo"
-  fifo_reader_pid="$TMP_ROOT/diagnostic-package-blocked.pid"
   fifo_reader_terminated="$TMP_ROOT/diagnostic-package-blocked.term"
   mkfifo "$fifo_reader"
   SECONDS=0
-  run_with_watchdog "$TMP_ROOT/diagnostic-package-blocked.out" "$TMP_ROOT/diagnostic-package-blocked.err" bash -c 'trap "printf terminated > \"$3\"; exit" TERM; cat -- "$1" >/dev/null & child=$!; printf "%s\n" "$child" > "$2"; wait "$child"' _ "$fifo_reader" "$fifo_reader_pid" "$fifo_reader_terminated"
+  run_with_timeout bash -c 'trap "printf terminated > \"$2\"; exit" TERM; while :; do read -r _ < "$1"; done' _ "$fifo_reader" "$fifo_reader_terminated"
   rc=$?
   [ "$rc" -eq 124 ] || fail "blocked FIFO reader returned $rc instead of 124" || exit 1
-  [ "$SECONDS" -ge 2 ] || fail 'blocked FIFO reader returned a fake timeout before the deadline' || exit 1
-  [ "$SECONDS" -lt 5 ] || fail 'blocked FIFO reader exceeded the watchdog deadline' || exit 1
-  [ -s "$fifo_reader_pid" ] || fail 'blocked FIFO reader did not start a descendant' || exit 1
-  [ -f "$fifo_reader_terminated" ] || fail 'watchdog did not terminate its process group with SIGTERM' || exit 1
-  ! kill -0 "$(cat "$fifo_reader_pid")" 2>/dev/null || fail 'watchdog left the blocked FIFO reader running' || exit 1
-  run_with_watchdog "$TMP_ROOT/diagnostic-package-blocked.out" "$TMP_ROOT/diagnostic-package-blocked.err" bash -c 'cat -- "$1" >/dev/null & printf "%s\n" "$!" > "$2"; kill -TERM "$PPID"; wait' _ "$fifo_reader" "$fifo_reader_pid"
-  [ "$?" -eq 143 ] || fail 'watchdog did not handle received SIGTERM' || exit 1
-  ! kill -0 "$(cat "$fifo_reader_pid")" 2>/dev/null || fail 'received SIGTERM left the child group running' || exit 1
-  run_with_watchdog "$TMP_ROOT/diagnostic-package-blocked.out" "$TMP_ROOT/diagnostic-package-blocked.err" bash -c 'cat -- "$1" >/dev/null & printf "%s\n" "$!" > "$2"; exit 0' _ "$fifo_reader" "$fifo_reader_pid"
-  [ "$?" -eq 0 ] || fail 'successful leader did not preserve exit 0' || exit 1
-  ! kill -0 "$(cat "$fifo_reader_pid")" 2>/dev/null || fail 'successful leader left its descendant running' || exit 1
+  [ "$SECONDS" -ge 2 ] || fail 'blocked FIFO reader returned before the deadline' || exit 1
+  [ "$SECONDS" -lt 5 ] || fail 'blocked FIFO reader exceeded the deadline' || exit 1
+  [ -f "$fifo_reader_terminated" ] || fail 'blocked FIFO reader did not observe timeout TERM' || exit 1
 
-  : > "$fifo_reader_pid"
   SECONDS=0
-  run_with_watchdog "$TMP_ROOT/diagnostic-package-blocked.out" "$TMP_ROOT/diagnostic-package-blocked.err" bash -c '
-    printf "%s\n" "$$" > "$2"
-    trap "" TERM
-    printf ready > "$3"
-    exec cat -- "$1"
-  ' _ "$fifo_reader" "$fifo_reader_pid" "$fifo_reader_pid.ignoring"
+  run_with_timeout bash -c 'trap "" TERM; printf ready > "$2"; while :; do read -r _ < "$1"; done' _ "$fifo_reader" "$fifo_reader_terminated.ignoring"
   rc=$?
-  [ -s "$fifo_reader_pid" ] || fail 'TERM-ignoring FIFO reader did not start' || exit 1
-  if kill -0 "$(cat "$fifo_reader_pid")" 2>/dev/null; then
-    kill -KILL -- "-$(cat "$fifo_reader_pid")" 2>/dev/null || true
-    fail 'watchdog left its TERM-ignoring FIFO reader running'
-    exit 1
-  fi
-  [ -f "$fifo_reader_pid.ignoring" ] || fail 'FIFO reader never ignored TERM' || exit 1
-  [ "$rc" -eq 124 ] || fail "TERM-ignoring FIFO reader returned $rc instead of 124" || exit 1
+  [ -f "$fifo_reader_terminated.ignoring" ] || fail 'FIFO reader never ignored TERM' || exit 1
+  [ "$rc" -eq 137 ] || fail "TERM-ignoring FIFO reader returned $rc instead of 137" || exit 1
   [ "$SECONDS" -ge 2 ] || fail 'TERM-ignoring reader returned before the deadline' || exit 1
-  [ "$SECONDS" -lt 5 ] || fail 'TERM-ignoring reader exceeded the watchdog deadline' || exit 1
+  [ "$SECONDS" -lt 5 ] || fail 'TERM-ignoring reader exceeded the deadline' || exit 1
 
   for kind in fifo directory socket unreadable; do
     if [ "$kind" = socket ]; then home="$TMP_ROOT/p"; else home="$TMP_ROOT/diagnostic-package-$kind-home"; fi
@@ -2359,7 +2319,7 @@ PY
         ;;
       unreadable) : > "$metadata"; chmod 000 "$metadata"; [ ! -r "$metadata" ] || continue ;;
     esac
-    run_with_watchdog "$output" "$error" env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=1 bash -c 'source "$1"; managed_asset_diagnostic' _ "$ROOT/apply.sh"
+    run_with_timeout env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=1 bash -c 'source "$1"; managed_asset_diagnostic' _ "$ROOT/apply.sh" > "$output" 2> "$error"
     rc=$?
     [ "$rc" -eq 0 ] || fail "$kind package metadata diagnostic returned $rc" || exit 1
     grep -Fq 'UNAVAILABLE gentle-pi package.json' "$output" || fail "$kind package metadata was not unavailable" || exit 1
@@ -2368,10 +2328,10 @@ PY
       mkdir -p "$home/.gentle-ai"
       printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
       printf '\n' > "$home/.pi/agent/APPEND_SYSTEM.md"
-      run_with_watchdog "$output" "$error" env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check
+      run_with_timeout env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check > "$output" 2> "$error"
       rc=$?
       [ "$rc" -eq 2 ] || fail "FIFO package metadata check returned $rc" || exit 1
-      run_with_watchdog "$output" "$error" env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh"
+      run_with_timeout env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" > "$output" 2> "$error"
       rc=$?
       [ "$rc" -eq 0 ] || fail "FIFO package metadata apply returned $rc" || exit 1
     fi
