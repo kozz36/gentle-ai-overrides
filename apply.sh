@@ -1169,6 +1169,23 @@ source_has_path() {
   return 1
 }
 
+source_path_is_skipped() {
+  local wanted="$1" path
+  [ -n "$SOURCE_SKIPPED_ROWS" ] || return 1
+  while IFS= read -r path; do
+    [ "$wanted" = "$path" ] && return 0
+    case "$wanted" in "$path"/*) return 0 ;; esac
+  done <<< "$SOURCE_SKIPPED_ROWS"
+  return 1
+}
+
+source_path_was_reported_skipped() {
+  local wanted="$1" path
+  [ -n "$SOURCE_SKIPPED_ROWS" ] || return 1
+  while IFS= read -r path; do [ "$wanted" = "$path" ] && return 0; done <<< "$SOURCE_SKIPPED_ROWS"
+  return 1
+}
+
 source_group_incomplete() {
   local path="$1" group
   case "$path" in gentle-ai/support/*) group=support ;; *) group="${path%%/*}" ;; esac
@@ -1320,6 +1337,7 @@ managed_asset_diagnostic() {
   MANIFEST_ROWS=''
   MANIFEST_MALFORMED=0
   SOURCE_ROWS=''
+  SOURCE_SKIPPED_ROWS=''
   SOURCE_INCOMPLETE_GROUPS='|'
   printf '%s\n' 'gentle-pi managed-asset diagnostic (advisory; read-only)'
   if ! command -v jq >/dev/null 2>&1; then
@@ -1378,6 +1396,7 @@ managed_asset_diagnostic() {
       while IFS= read -r source_file; do
         path="$(asset_path_from_tree "$rel" "$source_dir" "$source_file")"
         if [ -L "$source_file" ]; then
+          SOURCE_SKIPPED_ROWS="${SOURCE_SKIPPED_ROWS}${SOURCE_SKIPPED_ROWS:+$'\n'}$path"
           diag_report UNAVAILABLE "$path (source package entry is a symlink; not read)"
         elif [ -d "$source_file" ]; then
           :
@@ -1387,6 +1406,7 @@ managed_asset_diagnostic() {
                   else diag_report MALFORMED "package asset path $path"; fi ;;
           esac
         else
+          SOURCE_SKIPPED_ROWS="${SOURCE_SKIPPED_ROWS}${SOURCE_SKIPPED_ROWS:+$'\n'}$path"
           diag_report UNAVAILABLE "$path (source package entry is non-regular; not read)"
         fi
       done <<< "$source_inventory"
@@ -1399,6 +1419,8 @@ managed_asset_diagnostic() {
     while IFS=$'\t' read -r path hash extra; do
       if source_group_incomplete "$path"; then
         diag_report UNAVAILABLE "$path (source inventory incomplete; ownership comparison skipped)"
+      elif source_path_is_skipped "$path"; then
+        source_path_was_reported_skipped "$path" || diag_report UNAVAILABLE "$path (source package entry unavailable; ownership comparison skipped)"
       else
         source_has_path "$path" || diag_report MISSING "$path (manifest ownership has no current package asset)"
       fi
