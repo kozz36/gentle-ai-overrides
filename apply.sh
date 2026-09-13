@@ -1169,6 +1169,23 @@ source_has_path() {
   return 1
 }
 
+source_path_is_skipped() {
+  local wanted="$1" path
+  [ -n "$SOURCE_SKIPPED_ROWS" ] || return 1
+  while IFS= read -r path; do
+    [ "$wanted" = "$path" ] && return 0
+    case "$wanted" in "$path"/*) return 0 ;; esac
+  done <<< "$SOURCE_SKIPPED_ROWS"
+  return 1
+}
+
+source_path_was_reported_skipped() {
+  local wanted="$1" path
+  [ -n "$SOURCE_SKIPPED_ROWS" ] || return 1
+  while IFS= read -r path; do [ "$wanted" = "$path" ] && return 0; done <<< "$SOURCE_SKIPPED_ROWS"
+  return 1
+}
+
 source_group_incomplete() {
   local path="$1" group
   case "$path" in gentle-ai/support/*) group=support ;; *) group="${path%%/*}" ;; esac
@@ -1211,17 +1228,40 @@ asset_state() {
 }
 
 discover_gentle_pi_package() {
-  local root candidate version seen='|'
+  local candidate metadata version seen='|' configured configured_rc package_root_rel
+  local -a candidates=()
   PACKAGE_ROOT=''
   PACKAGE_VERSION=''
   PACKAGE_DISCOVERY_STATUS=MISSING
-  for root in "$PI_AGENT_HOME" "${PI_CODING_AGENT_DIR:-}" "$HOME/.pi/agent"; do
-    [ -n "$root" ] || continue
-    candidate="$root/npm/node_modules/gentle-pi"
+
+  configured="$(pi_configured_package_kind)"
+  configured_rc=$?
+  case "$configured_rc" in
+    0)
+      package_root_rel="$(resolve_pi_gentle_package_root_rel)" || { PACKAGE_DISCOVERY_STATUS=UNAVAILABLE; return 1; }
+      candidates=("$HOME/$package_root_rel")
+      ;;
+    1)
+      candidates=(
+        "$PI_AGENT_HOME/npm/node_modules/gentle-pi"
+        "${PI_CODING_AGENT_DIR:-}/npm/node_modules/gentle-pi"
+        "$HOME/.pi/agent/npm/node_modules/gentle-pi"
+      )
+      ;;
+    *) PACKAGE_DISCOVERY_STATUS=UNAVAILABLE; return 1 ;;
+  esac
+
+  for candidate in "${candidates[@]}"; do
+    [ -n "$candidate" ] || continue
     case "$seen" in *"|$candidate|"*) continue ;; esac
     seen="${seen}${candidate}|"
-    [ -e "$candidate/package.json" ] || [ -L "$candidate/package.json" ] || continue
-    if ! version="$(jq -er 'select(type == "object" and .name == "gentle-pi" and (.version | type == "string") and (.version | length > 0)) | .version' "$candidate/package.json" 2>/dev/null)"; then
+    metadata="$candidate/package.json"
+    [ -e "$metadata" ] || [ -L "$metadata" ] || continue
+    if [ -L "$metadata" ] || [ ! -f "$metadata" ] || [ ! -r "$metadata" ]; then
+      PACKAGE_DISCOVERY_STATUS=UNAVAILABLE
+      return 1
+    fi
+    if ! version="$(jq -er 'select(type == "object" and .name == "gentle-pi" and (.version | type == "string") and (.version | test("^[A-Za-z0-9._+-]+$"))) | .version' "$metadata" 2>/dev/null)"; then
       PACKAGE_DISCOVERY_STATUS=MALFORMED
       return 1
     fi
@@ -1297,6 +1337,7 @@ managed_asset_diagnostic() {
   MANIFEST_ROWS=''
   MANIFEST_MALFORMED=0
   SOURCE_ROWS=''
+  SOURCE_SKIPPED_ROWS=''
   SOURCE_INCOMPLETE_GROUPS='|'
   printf '%s\n' 'gentle-pi managed-asset diagnostic (advisory; read-only)'
   if ! command -v jq >/dev/null 2>&1; then
@@ -1355,6 +1396,7 @@ managed_asset_diagnostic() {
       while IFS= read -r source_file; do
         path="$(asset_path_from_tree "$rel" "$source_dir" "$source_file")"
         if [ -L "$source_file" ]; then
+          SOURCE_SKIPPED_ROWS="${SOURCE_SKIPPED_ROWS}${SOURCE_SKIPPED_ROWS:+$'\n'}$path"
           diag_report UNAVAILABLE "$path (source package entry is a symlink; not read)"
         elif [ -d "$source_file" ]; then
           :
@@ -1364,6 +1406,7 @@ managed_asset_diagnostic() {
                   else diag_report MALFORMED "package asset path $path"; fi ;;
           esac
         else
+          SOURCE_SKIPPED_ROWS="${SOURCE_SKIPPED_ROWS}${SOURCE_SKIPPED_ROWS:+$'\n'}$path"
           diag_report UNAVAILABLE "$path (source package entry is non-regular; not read)"
         fi
       done <<< "$source_inventory"
@@ -1376,6 +1419,8 @@ managed_asset_diagnostic() {
     while IFS=$'\t' read -r path hash extra; do
       if source_group_incomplete "$path"; then
         diag_report UNAVAILABLE "$path (source inventory incomplete; ownership comparison skipped)"
+      elif source_path_is_skipped "$path"; then
+        source_path_was_reported_skipped "$path" || diag_report UNAVAILABLE "$path (source package entry unavailable; ownership comparison skipped)"
       else
         source_has_path "$path" || diag_report MISSING "$path (manifest ownership has no current package asset)"
       fi
