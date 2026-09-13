@@ -8,18 +8,22 @@ jobs:
   shell:
     name: Bash (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - name: Install ShellCheck
+      - name: Install test dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes jq shellcheck
-      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install --yes coreutils jq shellcheck
+      - name: Install test dependencies
         if: runner.os == 'macOS'
-        run: brew install jq shellcheck
+        run: brew install coreutils jq shellcheck
+      - name: Expose GNU coreutils
+        if: runner.os == 'macOS'
+        run: echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
       - name: Check Bash syntax
         run: bash -n apply.sh tests/run.sh
       - name: Run ShellCheck
