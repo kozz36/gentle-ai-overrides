@@ -53,6 +53,28 @@ to `backups/<timestamp>/<path-relative-to-$HOME>`. It refuses symbolic links,
 non-regular targets, missing or ambiguous anchors, failed backups, and targets
 that change during transformation. A no-op or `--check` run creates no backup.
 
+### Pi managed-asset advisory
+
+Normal and `--check` runs first emit one read-only Pi diagnostic. It verifies a
+`gentle-pi` package identity, compares its `agents`, `chains`, and `support`
+assets with the installed paths and schema-1 ownership manifest, and reports
+current managed/unmanaged, exact known-obsolete, customized-unknown, or missing
+metadata. The agent home follows `GENTLE_PI_AGENT_HOME`, then
+`PI_CODING_AGENT_DIR`, then `~/.pi/agent`. Package lookup checks that selected
+root first; a missing package can use the canonical Pi root, but an existing
+malformed preferred package stops as `MALFORMED` rather than mixing roots.
+Symlink, special, and unreadable asset entries are reported without being read.
+If a source subtree cannot be fully inventoried, its group is `UNAVAILABLE` and
+ownership comparison is skipped rather than claiming it current or missing. An
+unavailable package, hash tool, or metadata never changes overlay exit semantics.
+
+The diagnostic is not a migration authority and never rewrites, resets, or
+claims unknown customized files are user-written. It reports the published
+`gentle-pi@2.1.2` `chains/sdd-full.chain.md` hash as stale only on its exact
+match ([source](https://registry.npmjs.org/gentle-pi/2.1.2)). Inspect the reported
+asset and review an upstream update when appropriate; preserve custom content
+unless you independently choose to replace it. `APPLY_SH_LIB=1` remains silent.
+
 ## Compatibility
 
 The transforms intentionally fail closed when an upstream template no longer
@@ -61,6 +83,33 @@ matches a known structure. After upgrading Gentle AI:
 1. Run `./apply.sh --check`.
 2. Review any `ANCHOR-NOT-FOUND` result against the new upstream template.
 3. Update and test the matching transform before applying it.
+
+### Regression test prerequisites
+
+The regression suite requires `jq`, Node.js, Python 3, and GNU coreutils
+`timeout`. `jq` is an existing runtime dependency; Node.js is used by the
+runtime Pi settings-parser fallback. Python 3 and GNU `timeout` are additional
+test-only prerequisites. `apply.sh` does not install these dependencies.
+Missing test prerequisites fail the suite rather than skip coverage.
+Python 3 is used only for the synchronous relative Unix-domain socket fixture.
+
+On macOS, install GNU coreutils and expose its unprefixed tools before running
+the suite; Homebrew otherwise names the binary `gtimeout` outside this path:
+
+```sh
+brew install coreutils jq shellcheck
+export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
+```
+
+The GNU timeout regression calls `timeout -k 0.2 2`. It passes the command's
+arguments, environment, standard output, and standard error through unchanged;
+normal `0` and `2` exits remain unchanged. A cooperative deadline returns `124`.
+If the command ignores `TERM`, GNU timeout's kill-after path returns `137`.
+That assertion is status-only: PID existence alone cannot distinguish a live
+process from a zombie awaiting reaping. The suite explicitly cleans up its own
+FIFO fixtures, but does not claim that a leader's normal exit cleans descendants
+or that external `SIGTERM` produces
+`143` with descendant cleanup.
 
 The regression suite runs on Ubuntu and macOS:
 

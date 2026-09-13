@@ -28,6 +28,7 @@ RUBRIC_FILE="$OVERLAY_DIR/deltas/rubric-tdd.md"
 OPENCODE_ENGRAM_FILE="$OVERLAY_DIR/deltas/opencode-engram-idempotent.md"
 INIT_RUBRIC_FILE="${INIT_RUBRIC_FILE:-$OVERLAY_DIR/deltas/sdd-init-rubric.md}"
 STATE_JSON="$HOME/.gentle-ai/state.json"
+PI_AGENT_HOME="${GENTLE_PI_AGENT_HOME:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}}"
 BACKUP_ROOT="${GENTLE_AI_BACKUP_ROOT:-$OVERLAY_DIR/backups/$(date +%Y%m%d-%H%M%S)}"
 BACKED_UP_FILES='|'
 
@@ -1083,11 +1084,361 @@ rubric_apply_json() {
 }
 
 # ---------------------------------------------------------------------------
+# Read-only Pi managed-asset diagnostic. This is advisory: it neither changes
+# overlay state nor participates in preflight or exit-code decisions.
+# ---------------------------------------------------------------------------
+diag_report() { printf '  %s %s\n' "$1" "$2"; }
+
+valid_asset_hash() { [[ "$1" =~ ^[0-9a-f]{64}$ ]]; }
+
+valid_asset_path() {
+  case "$1" in agents/*|chains/*|gentle-ai/support/*) ;; *) return 1 ;; esac
+  case "/$1/" in *'//'|*'/./'*|*'/../'*|*/.*/*) return 1 ;; esac
+  case "$1" in *.md) ;; *) return 1 ;; esac
+  case "$1" in *[!A-Za-z0-9._/-]*) return 1 ;; esac
+}
+
+valid_asset_entries() {
+  jq -e 'if (.assets | type) != "object" then false else
+    all(.assets | to_entries[]; (.key | type) == "string" and (.value | type) == "string" and
+      (.key | test("^(agents|chains|gentle-ai/support)/[A-Za-z0-9._/-]+\\.md$") and contains("//") | not) and
+      (.key | split("/") | all(.[]; . != "." and . != ".." and startswith(".") | not)) and
+      (.value | test("^[0-9a-f]{64}$")))
+    end' "$1" >/dev/null 2>&1
+}
+
+asset_path_from_tree() {
+  local section="$1" root="$2" entry="$3" suffix
+  suffix="${entry#"$root"/}"
+  case "$section" in support) printf 'gentle-ai/support/%s\n' "$suffix" ;; *) printf '%s/%s\n' "$section" "$suffix" ;; esac
+}
+
+asset_path_has_symlink() {
+  local root="$1" file="$2" suffix part current
+  suffix="${file#"$root"/}"
+  [ "$suffix" != "$file" ] || return 1
+  current="$root"
+  while [ -n "$suffix" ]; do
+    part="${suffix%%/*}"
+    current="$current/$part"
+    [ -L "$current" ] && return 0
+    [ "$part" = "$suffix" ] && break
+    suffix="${suffix#*/}"
+  done
+  return 1
+}
+
+asset_sha256() {
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+package_source_for() {
+  case "$1" in
+    agents/*|chains/*) printf '%s\n' "$PACKAGE_ROOT/assets/$1" ;;
+    gentle-ai/support/*) printf '%s\n' "$PACKAGE_ROOT/assets/support/${1#gentle-ai/support/}" ;;
+  esac
+}
+
+installed_asset_for() {
+  case "$1" in
+    agents/*|chains/*) printf '%s\n' "$PI_AGENT_HOME/$1" ;;
+    gentle-ai/support/*) printf '%s\n' "$PI_AGENT_HOME/$1" ;;
+  esac
+}
+
+manifest_hash_for() {
+  local wanted="$1" path hash extra
+  [ -n "$MANIFEST_ROWS" ] || return 1
+  while IFS=$'\t' read -r path hash extra; do
+    [ -z "$extra" ] && [ "$path" = "$wanted" ] && { printf '%s\n' "$hash"; return 0; }
+  done <<< "$MANIFEST_ROWS"
+  return 1
+}
+
+source_has_path() {
+  local wanted="$1" path
+  [ -n "$SOURCE_ROWS" ] || return 1
+  while IFS= read -r path; do [ "$path" = "$wanted" ] && return 0; done <<< "$SOURCE_ROWS"
+  return 1
+}
+
+source_path_is_skipped() {
+  local wanted="$1" path
+  [ -n "$SOURCE_SKIPPED_ROWS" ] || return 1
+  while IFS= read -r path; do
+    [ "$wanted" = "$path" ] && return 0
+    case "$wanted" in "$path"/*) return 0 ;; esac
+  done <<< "$SOURCE_SKIPPED_ROWS"
+  return 1
+}
+
+source_path_was_reported_skipped() {
+  local wanted="$1" path
+  [ -n "$SOURCE_SKIPPED_ROWS" ] || return 1
+  while IFS= read -r path; do [ "$wanted" = "$path" ] && return 0; done <<< "$SOURCE_SKIPPED_ROWS"
+  return 1
+}
+
+source_group_incomplete() {
+  local path="$1" group
+  case "$path" in gentle-ai/support/*) group=support ;; *) group="${path%%/*}" ;; esac
+  case "$SOURCE_INCOMPLETE_GROUPS" in *"|$group|"*) return 0 ;; esac
+  return 1
+}
+
+known_legacy_origin() {
+  local wanted="$1" installed_hash="$2" path hash version extra
+  if [ "$wanted" = chains/sdd-full.chain.md ] && \
+     [ "$installed_hash" = 398f105e58b36fb169617257f4fc55b8bebdd5d26ddcb8b01556aed8dec0c0b ]; then
+    printf '%s\n' 'exact gentle-pi@2.1.2 content; https://registry.npmjs.org/gentle-pi/2.1.2'
+    return 0
+  fi
+  [ -n "$LEGACY_ROWS" ] || return 1
+  while IFS='|' read -r path hash version extra; do
+    [ -z "$extra" ] && [ "$path" = "$wanted" ] && [ "$hash" = "$installed_hash" ] && {
+      printf 'bundled gentle-pi@%s migration registry\n' "$version"; return 0; }
+  done <<< "$LEGACY_ROWS"
+  return 1
+}
+
+asset_state() {
+  local path="$1" source_hash="$2" installed_hash="$3" manifest_hash="$4" origin
+  if [ "$installed_hash" = "$source_hash" ]; then
+    if [ "$manifest_hash" = "$source_hash" ]; then
+      printf 'CURRENT-MANAGED %s (raw source and ownership hashes match)\n' "$path"
+    else
+      printf 'CURRENT-UNMANAGED %s (matches current source; manifest ownership is absent or different)\n' "$path"
+    fi
+    return 0
+  fi
+  if origin="$(known_legacy_origin "$path" "$installed_hash")"; then
+    printf 'KNOWN-OBSOLETE %s (%s; inspect/review update)\n' "$path" "$origin"
+  elif [ "${path#agents/}" != "$path" ]; then
+    printf 'CUSTOMIZED-UNKNOWN %s (agent routing/model rendering can differ; raw ownership is not proven)\n' "$path"
+  else
+    printf 'CUSTOMIZED-UNKNOWN %s (changed content has no known official hash proof)\n' "$path"
+  fi
+}
+
+discover_gentle_pi_package() {
+  local candidate metadata version seen='|' configured configured_rc package_root_rel
+  local -a candidates=()
+  PACKAGE_ROOT=''
+  PACKAGE_VERSION=''
+  PACKAGE_DISCOVERY_STATUS=MISSING
+
+  configured="$(pi_configured_package_kind)"
+  configured_rc=$?
+  case "$configured_rc" in
+    0)
+      package_root_rel="$(resolve_pi_gentle_package_root_rel)" || { PACKAGE_DISCOVERY_STATUS=UNAVAILABLE; return 1; }
+      candidates=("$HOME/$package_root_rel")
+      ;;
+    1)
+      candidates=(
+        "$PI_AGENT_HOME/npm/node_modules/gentle-pi"
+        "${PI_CODING_AGENT_DIR:-}/npm/node_modules/gentle-pi"
+        "$HOME/.pi/agent/npm/node_modules/gentle-pi"
+      )
+      ;;
+    *) PACKAGE_DISCOVERY_STATUS=UNAVAILABLE; return 1 ;;
+  esac
+
+  for candidate in "${candidates[@]}"; do
+    [ -n "$candidate" ] || continue
+    case "$seen" in *"|$candidate|"*) continue ;; esac
+    seen="${seen}${candidate}|"
+    metadata="$candidate/package.json"
+    [ -e "$metadata" ] || [ -L "$metadata" ] || continue
+    if [ -L "$metadata" ] || [ ! -f "$metadata" ] || [ ! -r "$metadata" ]; then
+      PACKAGE_DISCOVERY_STATUS=UNAVAILABLE
+      return 1
+    fi
+    if ! version="$(jq -er 'select(type == "object" and .name == "gentle-pi" and (.version | type == "string") and (.version | test("^[A-Za-z0-9._+-]+$"))) | .version' "$metadata" 2>/dev/null)"; then
+      PACKAGE_DISCOVERY_STATUS=MALFORMED
+      return 1
+    fi
+    PACKAGE_ROOT="$candidate"
+    PACKAGE_VERSION="$version"
+    PACKAGE_DISCOVERY_STATUS=OK
+    return 0
+  done
+  return 1
+}
+
+load_legacy_registry() {
+  local registry rows path hash version extra valid
+  LEGACY_ROWS=''
+  for registry in "$PACKAGE_ROOT"/assets/migrations/*.json; do
+    [ -f "$registry" ] && [ ! -L "$registry" ] || continue
+    if ! jq -e 'type == "object" and .schemaVersion == 1 and (.packageVersion | type == "string") and (.packageVersion | test("^[A-Za-z0-9._+-]+$")) and (.assets | type == "object")' "$registry" >/dev/null 2>&1 || ! valid_asset_entries "$registry"; then
+      diag_report MALFORMED "migration registry $(basename -- "$registry") (schema 1 safe path/hash entries required)"
+      continue
+    fi
+    version="$(jq -r '.packageVersion' "$registry")"
+    rows="$(jq -r '.assets | to_entries[] | [.key, .value] | @tsv' "$registry")"
+    valid=1
+    if [ -n "$rows" ]; then
+      while IFS=$'\t' read -r path hash extra; do
+        if [ -n "$extra" ] || ! valid_asset_path "$path" || ! valid_asset_hash "$hash"; then valid=0; break; fi
+      done <<< "$rows"
+    fi
+    if [ "$valid" -eq 0 ]; then
+      diag_report MALFORMED "migration registry $(basename -- "$registry") (schema 1 safe path/hash entries required)"
+      continue
+    fi
+    if [ -n "$rows" ]; then
+      while IFS=$'\t' read -r path hash extra; do
+        LEGACY_ROWS="${LEGACY_ROWS}${LEGACY_ROWS:+$'\n'}${path}|${hash}|${version}"
+      done <<< "$rows"
+    fi
+  done
+}
+
+diagnose_asset() {
+  local path="$1" source installed source_hash installed_hash manifest_hash
+  source="$(package_source_for "$path")"
+  installed="$(installed_asset_for "$path")"
+  if [ ! -f "$source" ] || [ -L "$source" ]; then
+    diag_report MISSING "$path (manifest ownership has no current package asset)"
+    return 0
+  fi
+  source_hash="$(asset_sha256 "$source")" || { diag_report UNAVAILABLE "$path (source asset hash unavailable)"; return 0; }
+  if asset_path_has_symlink "$PI_AGENT_HOME" "$installed"; then
+    diag_report UNAVAILABLE "$path (installed asset path contains a symlink; not read)"
+    return 0
+  fi
+  if [ ! -e "$installed" ] && [ ! -L "$installed" ]; then
+    diag_report MISSING "$path (installed asset is absent)"
+    return 0
+  fi
+  if [ ! -f "$installed" ] || [ -L "$installed" ]; then
+    diag_report UNAVAILABLE "$path (installed asset is not a regular readable file)"
+    return 0
+  fi
+  installed_hash="$(asset_sha256 "$installed")" || { diag_report UNAVAILABLE "$path (installed asset hash unavailable)"; return 0; }
+  if [ "${MANIFEST_MALFORMED:-0}" -eq 1 ] && [ "$installed_hash" = "$source_hash" ]; then
+    diag_report MALFORMED "$path (ownership metadata invalid; current classification skipped)"
+    return 0
+  fi
+  manifest_hash="$(manifest_hash_for "$path" 2>/dev/null || true)"
+  asset_state "$path" "$source_hash" "$installed_hash" "$manifest_hash"
+}
+
+managed_asset_diagnostic() {
+  local manifest="$PI_AGENT_HOME/gentle-ai/managed-assets.json" rows path hash extra source_dir source_file rel valid source_inventory
+  MANIFEST_ROWS=''
+  MANIFEST_MALFORMED=0
+  SOURCE_ROWS=''
+  SOURCE_SKIPPED_ROWS=''
+  SOURCE_INCOMPLETE_GROUPS='|'
+  printf '%s\n' 'gentle-pi managed-asset diagnostic (advisory; read-only)'
+  if ! command -v jq >/dev/null 2>&1; then
+    diag_report UNAVAILABLE 'jq is required to verify package and manifest metadata'
+    return 0
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    diag_report UNAVAILABLE 'sha256sum or shasum is required to compare asset content'
+    return 0
+  fi
+  if ! discover_gentle_pi_package; then
+    diag_report "$PACKAGE_DISCOVERY_STATUS" 'gentle-pi package.json (verified package identity unavailable)'
+    return 0
+  fi
+  diag_report SOURCE "verified gentle-pi@$PACKAGE_VERSION package assets"
+  if [ ! -e "$manifest" ] && [ ! -L "$manifest" ]; then
+    diag_report MISSING 'managed-assets.json (ownership metadata unavailable)'
+  elif [ ! -f "$manifest" ] || [ -L "$manifest" ] || [ ! -r "$manifest" ] || \
+       ! jq -e 'type == "object" and .schemaVersion == 1 and (.assets | type == "object")' "$manifest" >/dev/null 2>&1 || \
+       ! valid_asset_entries "$manifest"; then
+    MANIFEST_MALFORMED=1
+    diag_report MALFORMED 'managed-assets.json (schema 1 safe path/hash entries required)'
+  else
+    rows="$(jq -r '.assets | to_entries[] | [.key, .value] | @tsv' "$manifest")"
+    valid=1
+    if [ -n "$rows" ]; then
+      while IFS=$'\t' read -r path hash extra; do
+        if [ -n "$extra" ] || ! valid_asset_path "$path" || ! valid_asset_hash "$hash"; then valid=0; break; fi
+      done <<< "$rows"
+    fi
+    if [ "$valid" -eq 1 ]; then
+      MANIFEST_ROWS="$rows"
+    else
+      MANIFEST_MALFORMED=1
+      diag_report MALFORMED 'managed-assets.json (schema 1 safe path/hash entries required)'
+    fi
+  fi
+  load_legacy_registry
+  for rel in agents chains support; do
+    source_dir="$PACKAGE_ROOT/assets/$rel"
+    if [ ! -d "$source_dir" ] || [ -L "$source_dir" ]; then
+      diag_report MISSING "package assets/$rel (source directory unavailable)"
+      continue
+    fi
+    if [ ! -r "$source_dir" ] || [ ! -x "$source_dir" ]; then
+      SOURCE_INCOMPLETE_GROUPS="${SOURCE_INCOMPLETE_GROUPS}${rel}|"
+      diag_report UNAVAILABLE "package assets/$rel (source directory unreadable)"
+      continue
+    fi
+    if ! source_inventory="$(LC_ALL=C find "$source_dir" -mindepth 1 -print 2>/dev/null | LC_ALL=C sort)"; then
+      SOURCE_INCOMPLETE_GROUPS="${SOURCE_INCOMPLETE_GROUPS}${rel}|"
+      diag_report UNAVAILABLE "package assets/$rel (source inventory incomplete)"
+      continue
+    fi
+    if [ -n "$source_inventory" ]; then
+      while IFS= read -r source_file; do
+        path="$(asset_path_from_tree "$rel" "$source_dir" "$source_file")"
+        if [ -L "$source_file" ]; then
+          SOURCE_SKIPPED_ROWS="${SOURCE_SKIPPED_ROWS}${SOURCE_SKIPPED_ROWS:+$'\n'}$path"
+          diag_report UNAVAILABLE "$path (source package entry is a symlink; not read)"
+        elif [ -d "$source_file" ]; then
+          :
+        elif [ -f "$source_file" ]; then
+          case "$source_file" in
+            *.md) if valid_asset_path "$path"; then SOURCE_ROWS="${SOURCE_ROWS}${SOURCE_ROWS:+$'\n'}$path"
+                  else diag_report MALFORMED "package asset path $path"; fi ;;
+          esac
+        else
+          SOURCE_SKIPPED_ROWS="${SOURCE_SKIPPED_ROWS}${SOURCE_SKIPPED_ROWS:+$'\n'}$path"
+          diag_report UNAVAILABLE "$path (source package entry is non-regular; not read)"
+        fi
+      done <<< "$source_inventory"
+    fi
+  done
+  if [ -n "$SOURCE_ROWS" ]; then
+    while IFS= read -r path; do diagnose_asset "$path"; done <<< "$SOURCE_ROWS"
+  fi
+  if [ -n "$MANIFEST_ROWS" ]; then
+    while IFS=$'\t' read -r path hash extra; do
+      if source_group_incomplete "$path"; then
+        diag_report UNAVAILABLE "$path (source inventory incomplete; ownership comparison skipped)"
+      elif source_path_is_skipped "$path"; then
+        source_path_was_reported_skipped "$path" || diag_report UNAVAILABLE "$path (source package entry unavailable; ownership comparison skipped)"
+      else
+        source_has_path "$path" || diag_report MISSING "$path (manifest ownership has no current package asset)"
+      fi
+    done <<< "$MANIFEST_ROWS"
+  fi
+  diag_report RECOMMENDATION 'inspect/review reported assets and update through Gentle AI when appropriate'
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Drive
 # ---------------------------------------------------------------------------
 if [ "${APPLY_SH_LIB:-0}" = 1 ]; then
   return 0 2>/dev/null || exit 0
 fi
+
+managed_asset_diagnostic
+printf '\n'
 
 if [ "$CHECK_ONLY" -eq 0 ]; then
   "$OVERLAY_DIR/apply.sh" --check >/dev/null
