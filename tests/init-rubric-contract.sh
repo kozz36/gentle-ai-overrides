@@ -225,6 +225,32 @@ test_pi_workflow_consumer_contract() (
   grep -Fq 'headings != 1 || archives != 1 || binaries != 1' "$apply" || fail 'Pi workflow structural-anchor guard is missing' || exit 1
 )
 
+test_pi_policy_defined_forwarding_contract() (
+  local pi="$TMP_ROOT/pi-policy-defined.md" invariant
+  extract_rubric_tdd_shape pi-workflow "$pi" || exit 1
+  for invariant in \
+    'session-selected artifact store; do not switch stores merely because `openspec/config.yaml` exists.' \
+    'A valid rubric and its resolved slice instruction govern this forwarding.' \
+    'The preserved binary Strict TDD clause above is fallback-only when there is genuinely no rubric.' \
+    'Missing required canonical policy, or invalid, ambiguous, or conflicting policy, is not no rubric' \
+    'Policy-defined matching, precedence, and exceptions govern each slice.' \
+    'Do not replace declared exceptions or precedence with generic all-matches, strictest-wins, or union behavior.' \
+    'If the canonical policy explicitly declares `all-rows` with `strictest-wins` and evidence union, use that declared resolution; otherwise use its declared resolution.' \
+    'Only use `default` when no non-default match exists and that policy actually declares a default.' \
+    'Forward only commands applicable to the current phase under declared bindings.' \
+    'Do not reuse an apply command for verify, or a verify command for apply, unless the policy explicitly declares it shared.' \
+    'A legacy flat command with no phase binding remains applicable as declared' \
+    'Before launch, add plain prompt content to the existing parent phase prompt: the canonical source reference, slice, resolved MODE, phase-applicable exact commands, disciplines/evidence, and skill paths; then send it to the child.' \
+    "A child agent's own configuration or gate can still conflict; do not claim this prompt guarantees child enforcement or change the child without separate scope." \
+    'Preflight or native-status injection by a runtime extension does not resolve MODE; the parent orchestrator remains responsible for MODE resolution.' \
+    'This is parent LLM instruction, not a new parser, runtime adapter, schema, trace protocol, or capture protocol.' \
+    'Do not inline all artifact contents; executors read their artifacts normally.' \
+    'This forwarding applies only to `sdd-apply` and `sdd-verify`, not to RDD reviewers.'; do
+    grep -Fq "$invariant" "$pi" || fail "Pi workflow lacks policy-defined forwarding: $invariant" || exit 1
+  done
+  ! grep -Fq 'otherwise apply strictest MODE precedence and union only applicable non-default rows' "$pi" || fail 'Pi workflow retains an unconditional all-rows resolution' || exit 1
+)
+
 test_delta_shape_grammar() (
   local dir="$TMP_ROOT/source-shapes" fixture
   mkdir -p "$dir"
@@ -278,6 +304,7 @@ run test_policy_contract
 run test_human_clarification_contract
 run test_opencode_final_sdd_init_contract
 run test_pi_workflow_consumer_contract
+run test_pi_policy_defined_forwarding_contract
 run test_delta_shape_grammar
 run test_deterministic_fallback_contract
 

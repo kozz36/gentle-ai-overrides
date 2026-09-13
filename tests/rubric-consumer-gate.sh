@@ -36,7 +36,6 @@ assert_forwarding() {
     'caches the canonical policy ONCE per session' \
     'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' \
     '`default` ONLY when no non-default row matches' \
-    'union only applicable non-default rows' \
     'Forward the effective MODE and the policy'"'"'s exact declared commands, disciplines/evidence, and skill paths' \
     'without substituting downstream matching rules or policy rewriting.' \
     'Consumer-envelope or compiler diagnostics MUST NOT supersede a valid canonical policy.' \
@@ -49,6 +48,41 @@ assert_forwarding() {
   for text in RubricConsumerEnvelopeV1 RubricConsumerBlockedV1 'canonical-model digest' 'state gate' 'Resolve it ONCE per session' 'then caches that resolution' 'recovery_action=run '; do
     ! printf '%s\n' "$content" | grep -Fq "$text" || fail "$label retains obsolete $text" || return 1
   done
+}
+
+generic_resolution_matches() {
+  grep -Fq 'otherwise apply strictest MODE precedence and union only applicable non-default rows' "$1"
+}
+
+pi_forwarding_matches() {
+  local file="$1" text
+  for text in \
+    'session-selected artifact store; do not switch stores merely because `openspec/config.yaml` exists.' \
+    'A valid rubric and its resolved slice instruction govern this forwarding.' \
+    'The preserved binary Strict TDD clause above is fallback-only when there is genuinely no rubric.' \
+    'Missing required canonical policy, or invalid, ambiguous, or conflicting policy, is not no rubric' \
+    'Policy-defined matching, precedence, and exceptions govern each slice.' \
+    'Do not replace declared exceptions or precedence with generic all-matches, strictest-wins, or union behavior.' \
+    'If the canonical policy explicitly declares `all-rows` with `strictest-wins` and evidence union, use that declared resolution; otherwise use its declared resolution.' \
+    'Only use `default` when no non-default match exists and that policy actually declares a default.' \
+    'Forward only commands applicable to the current phase under declared bindings.' \
+    'Do not reuse an apply command for verify, or a verify command for apply, unless the policy explicitly declares it shared.' \
+    'A legacy flat command with no phase binding remains applicable as declared' \
+    'Before launch, add plain prompt content to the existing parent phase prompt: the canonical source reference, slice, resolved MODE, phase-applicable exact commands, disciplines/evidence, and skill paths; then send it to the child.' \
+    "A child agent's own configuration or gate can still conflict; do not claim this prompt guarantees child enforcement or change the child without separate scope." \
+    'Preflight or native-status injection by a runtime extension does not resolve MODE; the parent orchestrator remains responsible for MODE resolution.' \
+    'This is parent LLM instruction, not a new parser, runtime adapter, schema, trace protocol, or capture protocol.' \
+    'Do not inline all artifact contents; executors read their artifacts normally.' \
+    'This forwarding applies only to `sdd-apply` and `sdd-verify`, not to RDD reviewers.'; do
+    grep -Fq "$text" "$file" || return 1
+  done
+  # Bounded regression guards; this is not general prose-contradiction parsing.
+  ! grep -Fq 'Always choose the highest MODE.' "$file" &&
+    ! grep -Fq 'otherwise apply strictest MODE precedence and union only applicable non-default rows' "$file"
+}
+
+assert_pi_forwarding() {
+  pi_forwarding_matches "$1" || fail "$2 lacks the policy-defined Pi forwarding contract"
 }
 
 test_consumer_wording_uses_canonical_policy() (
@@ -65,6 +99,7 @@ test_consumer_wording_uses_canonical_policy() (
   done
   output="$TMP_ROOT/pi-workflow.md"
   extract_shape "$ROOT/deltas/rubric-tdd.md" pi-workflow > "$output"
+  assert_pi_forwarding "$output" 'Pi workflow' || exit 1
   grep -Fq 'It may mechanically match existing policy rows using only those declared rules and must never invent commands or evidence.' "$output" || fail 'Pi workflow does not permit mechanical matching of existing rows' || exit 1
   ! grep -Fq 'never author, generate, mutate, broaden, infer, select' "$output" || fail 'Pi workflow forbids selecting existing rows' || exit 1
 )
@@ -81,21 +116,44 @@ test_temporary_home_host_goldens() (
   jq -n --arg prompt "$ANCHOR_ITEM3"$'\n'"$CACHE_OLD" '{agent: {"gentle-orchestrator": {prompt: $prompt}}}' > "$json"
   rubric_apply_json "$json" || fail 'OpenCode JSON golden did not render' || exit 1
   assert_forwarding "$prose" 'Claude lazy prose' || exit 1
-  for host in Cursor 'VS Code Copilot' 'Gemini CLI' Antigravity; do assert_forwarding "$list" "$host list" || exit 1; done
-  assert_forwarding "$pi_workflow" 'Pi workflow' || exit 1
+  generic_resolution_matches "$prose" || fail 'Claude lazy prose lost its declared all-rows resolution' || exit 1
+  for host in Cursor 'VS Code Copilot' 'Gemini CLI' Antigravity; do
+    assert_forwarding "$list" "$host list" || exit 1
+    generic_resolution_matches "$list" || fail "$host list lost its declared all-rows resolution" || exit 1
+  done
+  assert_pi_forwarding "$pi_workflow" 'Pi workflow' || exit 1
   grep -Fqx 'The orchestrator reads the canonical `sdd-init` authoritative policy directly from the active artifact store and caches the canonical policy ONCE per session, but must resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules; producer and activation semantics remain owned by `sdd-init`.' "$list" || fail 'list transform did not install canonical cache forwarding' || exit 1
   grep -Fq 'Gentle AI 2.6.0 with `gentle-pi@2.4.0`' "$pi_workflow" || fail 'Pi workflow lacks the 2.6.0/2.4.0 compatibility contract' || exit 1
   grep -Fq 'APPEND_SYSTEM.md remains installer-managed and untouched.' "$pi_workflow" || fail 'Pi workflow lacks the APPEND preservation boundary' || exit 1
   jq -r '.agent["gentle-orchestrator"].prompt' "$json" > "$TMP_ROOT/opencode-prompt"
   assert_forwarding "$TMP_ROOT/opencode-prompt" 'OpenCode JSON' || exit 1
+  generic_resolution_matches "$TMP_ROOT/opencode-prompt" || fail 'OpenCode JSON lost its declared all-rows resolution' || exit 1
   jq -e --arg cache "$CACHE_NEW" '.agent["gentle-orchestrator"].prompt | contains($cache)' "$json" >/dev/null || fail 'OpenCode JSON did not preserve escaped canonical cache forwarding' || exit 1
   host_rows | grep -Fqx 'codex|rubric-none|.codex/AGENTS.md' || fail 'Codex is not rubric-none' || exit 1
   host_rows | grep -Fq 'kimi|' && fail 'Kimi must remain unmanaged' && exit 1
   grep -Fq 'Kimi is explicitly current-scope unmanaged' "$ROOT/deltas/rubric-tdd.md" || fail 'Kimi scope is undocumented' || exit 1
 )
 
+test_pi_policy_regression_is_rejected() (
+  local pi_input="$TMP_ROOT/pi-regression-input" pi_workflow="$TMP_ROOT/pi-regression-workflow" regression="$TMP_ROOT/pi-regression-mutated" contradiction="$TMP_ROOT/pi-regression-contradiction"
+  load_overlay
+  printf '%s\n\n%s\n\n%s\n' "$PI_WORKFLOW_HEADING" "$PI_WORKFLOW_BINARY" "$PI_WORKFLOW_ARCHIVE" > "$pi_input"
+  pi_rubric_workflow_transform < "$pi_input" > "$pi_workflow" || fail 'Pi regression fixture did not render' || exit 1
+  assert_pi_forwarding "$pi_workflow" 'Pi regression fixture' || exit 1
+  sed 's/Policy-defined matching, precedence, and exceptions govern each slice\./Generic strictest matching governs each slice./' "$pi_workflow" > "$regression"
+  if pi_forwarding_matches "$regression"; then
+    fail 'Pi forwarding test accepts a generic-resolution regression' || exit 1
+  fi
+  sed 's|<!-- /gentle-ai:pi-rubric-forwarding -->|Always choose the highest MODE.\n<!-- /gentle-ai:pi-rubric-forwarding -->|' "$pi_workflow" > "$contradiction"
+  if pi_forwarding_matches "$contradiction"; then
+    fail 'Pi forwarding test accepts a positive-preserving MODE contradiction' || exit 1
+  fi
+)
+
+
 run() { if "$1"; then pass "${1#test_}"; else FAIL=$((FAIL + 1)); fi; }
 run test_consumer_wording_uses_canonical_policy
 run test_temporary_home_host_goldens
+run test_pi_policy_regression_is_rejected
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
