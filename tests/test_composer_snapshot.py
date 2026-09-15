@@ -148,6 +148,17 @@ class SnapshotTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             result.payload = b"changed"
 
+    def test_existing_snapshot_reader_accepts_captured_schema(self):
+        from composer.__main__ import _snapshot
+        result = self.capture()
+        # Only the test persists evidence in its owned fixture, never capture_snapshot.
+        (self.path / "state.json").write_bytes(result.payload)
+        with Root(self.path) as root:
+            entries, contents, digest = _snapshot(root)
+        self.assertEqual(entries, result.entries)
+        self.assertEqual(contents, self.data)
+        self.assertEqual(digest, result.digest)
+
     def test_serialized_metadata_has_an_aggregate_limit(self):
         for target in TARGETS:
             if target.startswith("agents/"):
