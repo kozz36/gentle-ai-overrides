@@ -12,6 +12,26 @@ Active-surface compatibility was reverified with official Gentle AI `2.6.0` on L
 with `gentle-pi@2.4.0`; final `2.5.0` and `2.5.0-rc.3` OpenCode shapes remain
 accepted as bounded legacy compatibility forms.
 
+## Private Pi candidate composer
+
+For private Pi maintenance, the [candidate composer CLI](composer/README.md) produces
+a deterministic candidate bundle and plan from explicit pinned inputs. It does **not**
+install, apply, or authorize changes, and it does not discover native ownership.
+
+Four private candidate-generation and confirmation replay probes passed on Python
+3.9.25 and 3.14.7, normal and `-O`, reproducing all fourteen approved Pi postimages
+from fourteen pinned `gentle-pi` 2.7.0 source assets and a user-approved profile.
+The CodeGraph and MCP blocks match the Gentle AI 2.9.1 generator; the init block
+matches the historical overlay revision below. This is replay verification only,
+not installation authority or a native ownership claim. The
+replay's historical overlay input was `v2.6.0-overlay.3` at revision
+`6cd8caee2c8ab7a8d3121e1f513e6cacc41d2b98`; it is provenance only. Release identity
+is defined by the Git tag.
+
+The existing legacy eight-agent [`apply.sh`](apply.sh) installer below is a separate
+overlay workflow. Its documented installation instructions remain the path for that
+installer; the composer does not replace it.
+
 ## Install
 
 Requirements: Bash 3.2 or newer and standard POSIX command-line tools. `jq` is
