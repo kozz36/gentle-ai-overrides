@@ -28,7 +28,7 @@ class PackageClaimTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.home = Path(self.temp.name)
+        self.home = Path(self.temp.name).resolve()
         self.manifest = self.home / "gentle-ai" / "managed-assets.json"
         self.ownership = dict.fromkeys(TARGETS, "unknown")
         self.current = {target: self.digest(target) for target in TARGETS}
