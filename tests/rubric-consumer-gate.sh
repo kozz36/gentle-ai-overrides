@@ -122,7 +122,7 @@ test_temporary_home_host_goldens() (
     generic_resolution_matches "$list" || fail "$host list lost its declared all-rows resolution" || exit 1
   done
   assert_pi_forwarding "$pi_workflow" 'Pi workflow' || exit 1
-  grep -Fqx 'The orchestrator reads the canonical `sdd-init` authoritative policy directly from the active artifact store and caches the canonical policy ONCE per session, but must resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules; producer and activation semantics remain owned by `sdd-init`.' "$list" || fail 'list transform did not install canonical cache forwarding' || exit 1
+  grep -Fq 'The orchestrator reads the canonical `sdd-init` authoritative policy directly from the active artifact store and caches the canonical policy ONCE per session, but must resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules; producer and activation semantics remain owned by `sdd-init`. Declared work intent selects MODE; project scope selects only applicable command bindings.' "$list" || fail 'list transform did not install intent/scope cache forwarding' || exit 1
   grep -Fq 'Gentle AI 2.6.0 with `gentle-pi@2.4.0`' "$pi_workflow" || fail 'Pi workflow lacks the 2.6.0/2.4.0 compatibility contract' || exit 1
   grep -Fq 'APPEND_SYSTEM.md remains installer-managed and untouched.' "$pi_workflow" || fail 'Pi workflow lacks the APPEND preservation boundary' || exit 1
   jq -r '.agent["gentle-orchestrator"].prompt' "$json" > "$TMP_ROOT/opencode-prompt"
@@ -150,10 +150,27 @@ test_pi_policy_regression_is_rejected() (
   fi
 )
 
+test_intent_scope_forwarding_contract() (
+  local shape output text
+  for shape in list-item prose cache-sentence pi-workflow; do
+    output="$TMP_ROOT/$shape-intent-scope.md"
+    extract_shape "$ROOT/deltas/rubric-tdd.md" "$shape" > "$output"
+    for text in \
+      'Declared work intent selects MODE; project scope selects only applicable command bindings.' \
+      'Test-only maintenance may bind mapped production-scope evidence but never infers production work intent.' \
+      'Mixed intents union applicable scoped evidence and select the highest applicable MODE only after explicit exceptions and precedence.' \
+      'A manual old-path rule conflict with intent policy is shown and requires clarification; never rewrite the manual row.' \
+      'Unmatched executable, configuration, or CI work needs a visible rationale or blocking decision; never silently receives no evidence.'; do
+      grep -Fq "$text" "$output" || fail "$shape lacks intent/scope forwarding: $text" || exit 1
+    done
+  done
+)
+
 
 run() { if "$1"; then pass "${1#test_}"; else FAIL=$((FAIL + 1)); fi; }
 run test_consumer_wording_uses_canonical_policy
 run test_temporary_home_host_goldens
 run test_pi_policy_regression_is_rejected
+run test_intent_scope_forwarding_contract
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

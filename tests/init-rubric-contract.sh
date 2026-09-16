@@ -33,8 +33,8 @@ assert_project_declared_satisfiability() {
 assert_policy_contract() {
   local file="$1" label="$2"
   grep -Fq 'Before a valid answer, return the candidate but persist no selected policy or active rubric' "$file" || fail "$label persists policy before selection" || return 1
-  grep -Fq 'Answer `strict`: persist `strict_tdd: true` and no consumer-visible active rubric' "$file" || fail "$label allows active rubric in strict mode" || return 1
-  grep -Fq 'Answer `rubric`: persist `strict_tdd: false` plus the active authoritative rubric' "$file" || fail "$label lacks rubric-mode activation" || return 1
+  grep -Fq 'strict persists `strict_tdd: true` with no consumer-visible active rubric' "$file" || fail "$label allows active rubric in strict mode" || return 1
+  grep -Fq 'rubric persists `strict_tdd: false` with the active authoritative rubric' "$file" || fail "$label lacks rubric-mode activation" || return 1
   grep -Fq 'Never populate `default` by unioning all detected methods' "$file" || fail "$label permits non-selective default rows" || return 1
   grep -Fq '## TDD RUBRIC (per-work-type — AUTHORITATIVE)' "$file" || fail "$label lacks authoritative rubric heading" || return 1
   grep -Fq '| Signature (detectable trigger in the diff) | MODE | Disciplines / evidence |' "$file" || fail "$label lacks consumer-compatible rubric table" || return 1
@@ -269,24 +269,79 @@ test_delta_shape_grammar() (
   done
 )
 
-test_deterministic_fallback_contract() (
-  local shape file reason
+test_prompt_procedure_contract() (
+  local shape file
   for shape in skill details pi; do
-    file="$TMP_ROOT/$shape-fallback.md"
+    file="$TMP_ROOT/$shape-prompt-procedure.md"
     extract_init_shape "$shape" "$file" || exit 1
-    grep -Fq 'eligible only before any rubric state has been declared or observed' "$file" || fail "$shape permits fallback after state declaration or observation" || exit 1
-    for reason in provider-unconfigured provider-unavailable provider-timeout primary-output-malformed primary-output-structurally-invalid; do
-      grep -Fq "\`$reason\`" "$file" || fail "$shape omits fallback reason: $reason" || exit 1
-    done
-    grep -Fq 'every other condition fails closed' "$file" || fail "$shape permits an untyped fallback reason" || exit 1
-    grep -Fq 'A valid active rubric is reused' "$file" || fail "$shape may replace valid active state" || exit 1
-    grep -Fq 'Declared-but-invalid, duplicate, staging, recovery-required, conflicted, unreadable, unavailable, or mismatched state blocks fallback' "$file" || fail "$shape permits fallback around observed invalid state" || exit 1
-    grep -Fq 'fixed Task-Intent Baseline v1 rows in this canonical order' "$file" || fail "$shape lacks deterministic baseline rows" || exit 1
-    grep -Fq 'baseline_version: task-intent-policy-baseline/v1' "$file" || fail "$shape lacks baseline provenance" || exit 1
-    grep -Fq 'producer: deterministic-baseline-fallback' "$file" || fail "$shape lacks fallback producer provenance" || exit 1
-    grep -Fq 'one admitted `fallback_reason` in candidate provenance' "$file" || fail "$shape lacks fallback reason provenance" || exit 1
-    grep -Fq 'structural validation, canonical compilation, serialization, activation, and independent readback before `ResolutionV1` publication' "$file" || fail "$shape bypasses the canonical activation path" || exit 1
+    grep -Fq 'Prompt procedure, not an external compiler:' "$file" || fail "$shape claims an external compiler" || exit 1
+    grep -Fq 'Present the reader view first and make the complete project-derived rubric candidate, its capability ledger, and its checksum accessible through verified artifact paths/references or on request before asking `strict|rubric`.' "$file" || fail "$shape does not make the full candidate accessible before representation choice" || exit 1
+    grep -Fq 'A `strict|rubric` answer selects only the representation; it neither approves nor activates any candidate.' "$file" || fail "$shape treats representation choice as approval" || exit 1
+    grep -Fq 'After selection, render the reader view first and make the complete selected-policy candidate and checksum accessible through verified artifact paths/references or on request. Require the maintainer to explicitly approve the complete candidate identified by that checksum, not merely the reader overview, before any write.' "$file" || fail "$shape lacks complete-candidate approval" || exit 1
+    grep -Fq 'Any candidate change or source drift invalidates approval; regenerate, redisplay, and obtain a new exact approval.' "$file" || fail "$shape permits stale approval" || exit 1
+    grep -Fq 'Use only ordinary available read/write/bash capabilities to retain or compare candidate bytes and checksum; that comparison is not CAS, a transaction, an opaque authority, or a compiler.' "$file" || fail "$shape overclaims candidate identity" || exit 1
+    grep -Fq 'Preserve the target preimage and its checksum before writing. Write once only after exact approval, immediately independently read back the same canonical source, and compare the persisted selected-policy content to the approved candidate.' "$file" || fail "$shape lacks preimage/write/readback procedure" || exit 1
+    grep -Fq 'On a write or readback failure, block and report the preimage, attempted target, and observed content; do not automatically rollback, compensate, or claim atomic/cross-backend transaction guarantees.' "$file" || fail "$shape overclaims failure recovery" || exit 1
+    grep -Fq 'If a selected backend lacks the required read, write, or independent readback operation, block; do not switch stores or declare a cross-backend result.' "$file" || fail "$shape switches or overclaims backend support" || exit 1
+    grep -Fq 'A generic provider fallback may draft a candidate only from the same project facts; it never bypasses display, exact approval, preimage capture, write, or readback and does not imply an implemented compiler.' "$file" || fail "$shape lets generic fallback bypass the procedure" || exit 1
+    ! grep -Fq 'CandidateV1' "$file" || fail "$shape retains an imaginary candidate compiler model" || exit 1
+    ! grep -Fq 'CanonicalPolicyModelV1' "$file" || fail "$shape retains an imaginary canonical compiler model" || exit 1
+    ! grep -Fq 'ResolutionV1' "$file" || fail "$shape retains an imaginary resolution envelope" || exit 1
   done
+)
+
+test_two_level_delivery_catalog_contract() (
+  local shape file category text readme="$ROOT/README.md"
+  for shape in skill details pi; do
+    file="$TMP_ROOT/$shape-two-level-delivery.md"
+    extract_init_shape "$shape" "$file" || exit 1
+    for text in \
+      'Deliver a two-level view of one candidate' \
+      "Reader view FIRST in the user's conversation language" \
+      'compact `work-type | MODE | key obligation` table' \
+      'Do not dump YAML or a wide command/tool-proof ledger by default' \
+      'Brevity must not hide meaningful exceptions, blocking evidence gaps, destructive differences, or approval scope' \
+      'Complete technical artifacts are English unless an explicit user/project artifact-language convention says otherwise' \
+      'full policy Markdown with every row, exact commands, bindings, independent tool proofs, precedence, exceptions, defaults, mixed-resolution rationale, and test-only rationale' \
+      'Technical identifiers and executable commands are never translated' \
+      'plus full serialized YAML when applicable' \
+      'clearly accessible through verified artifact paths/references or on request before approval' \
+      'The overview is not a second policy or a canonical source' \
+      'If technical detail is unavailable, the identity is stale, or the reader view is misleading, block' \
+      'The full-candidate identity/checksum and named destinations bind approval' \
+      'explicit approval covers the complete candidate identified by that checksum, not merely the reader overview' \
+      'A checksum identifies the approved bytes and destinations; it does not prove semantic equivalence' \
+      'OpenSpec persists YAML only; Engram persists canonical topic full Markdown only' \
+      'hybrid persists equivalent content in both only when selected' \
+      'No implicit Engram write follows from the Markdown reader view' \
+      '`none` returns the full content without activation and keeps complete detail inspectable on request or an appropriate surface rather than silently discarding it' \
+      'Readback and final delivery present the concise localized reader view plus full canonical references, not a wall of YAML' \
+      'Declared work intent selects MODE; project scope selects only applicable command bindings' \
+      'Test-only maintenance may bind mapped production-scope evidence but never infers production work intent' \
+      'Mixed intents union applicable scoped evidence and select the highest applicable MODE only after explicit exceptions and precedence' \
+      'Unmatched executable, configuration, or CI work needs a visible rationale or blocking decision; never silently receives no evidence' \
+      'A manual old-path rule conflict with intent policy is shown and requires clarification; never rewrite the manual row' \
+      'strict-tdd requires RED, GREEN, TRIANGULATE, and REFACTOR evidence' \
+      'Hosted CI proof distinguishes an explicit install from a cited image guarantee; neither requires arbitrary version pinning'; do
+      grep -Fq "$text" "$file" || fail "$shape lacks two-level delivery contract: $text" || exit 1
+    done
+    ! grep -Fq 'Present the complete reader-friendly Markdown projection FIRST' "$file" || fail "$shape retains the contradictory complete-projection-first wording" || exit 1
+    for category in new-observable-behavior bugfix data-schema-migration mechanical-behavior-preserving-change refactor docs-only ci configuration executable-scripts dependencies tests-only-maintenance; do
+      grep -Fq "\`$category\`" "$file" || fail "$shape omits catalog category: $category" || exit 1
+    done
+  done
+  for text in \
+    "reader view first in the user's conversation language" \
+    'complete technical artifacts in English' \
+    'not a second policy or canonical source' \
+    'full candidate identified by its checksum, not merely the reader overview' \
+    'verified artifact paths/references or on request before approval' \
+    'does not dump YAML or a wide command/tool-proof ledger by default' \
+    'none returns the full content without activation' \
+    'concise localized reader view plus full canonical references, not a wall of YAML'; do
+    grep -Fqi "$text" "$readme" || fail "README lacks two-level delivery guidance: $text" || exit 1
+  done
+  ! grep -Fqi 'complete reader-friendly Markdown projection before the selected YAML' "$readme" || fail 'README retains the contradictory complete-projection-first wording' || exit 1
 )
 
 run() {
@@ -306,7 +361,8 @@ run test_opencode_final_sdd_init_contract
 run test_pi_workflow_consumer_contract
 run test_pi_policy_defined_forwarding_contract
 run test_delta_shape_grammar
-run test_deterministic_fallback_contract
+run test_prompt_procedure_contract
+run test_two_level_delivery_catalog_contract
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
