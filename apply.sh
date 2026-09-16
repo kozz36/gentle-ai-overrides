@@ -64,6 +64,8 @@ CHANGED=0
 #   rubric-json      opencode.json -> .agent["gentle-orchestrator"].prompt (carries the list)
 #   pi-rubric-workflow Pi's package-owned lazy SDD workflow asset; marker-delimited
 #                      project-rubric forwarding after its binary contract
+#   pi-odd-forwarding Pi's package-owned ODD delegation asset; marker-delimited
+#                     parent-only rubric forwarding when the released ODD section exists
 #   rubric-none      host has no strict-TDD forwarding section; nothing to inject
 #   sdd-init-delegation OpenCode's hidden agent uses either the native inline
 #                       imperative or the exact native external prompt reference
@@ -77,6 +79,7 @@ claude-code|sdd-init-skill|.claude/skills/sdd-init/SKILL.md
 claude-code|sdd-init-details|.claude/skills/sdd-init/references/init-details.md
 pi|sdd-init-pi|@pi-gentle-pi-sdd-init@
 pi|pi-rubric-workflow|@pi-gentle-pi-workflow@
+pi|pi-odd-forwarding|@pi-gentle-pi-delegation@
 opencode|persona-marked|.config/opencode/AGENTS.md
 opencode|rubric-json|.config/opencode/opencode.json
 opencode|engram-idempotent|.config/opencode/plugins/engram.ts
@@ -264,6 +267,10 @@ resolve_pi_gentle_workflow_rel() {
   resolve_pi_gentle_asset_rel 'assets/sdd-orchestrator-workflow.md'
 }
 
+resolve_pi_gentle_delegation_rel() {
+  resolve_pi_gentle_asset_rel 'assets/orchestrator-delegation.md'
+}
+
 resolve_pi_gentle_sdd_init_rel() {
   resolve_pi_gentle_asset_rel 'assets/agents/sdd-init.md'
 }
@@ -279,6 +286,9 @@ resolve_target_rel() {
       ;;
     pi:@pi-gentle-pi-workflow@)
       resolve_pi_gentle_workflow_rel
+      ;;
+    pi:@pi-gentle-pi-delegation@)
+      resolve_pi_gentle_delegation_rel
       ;;
     pi:@pi-gentle-pi-sdd-init@)
       resolve_pi_gentle_sdd_init_rel
@@ -597,6 +607,37 @@ extract_shape_from() {
 
 extract_shape() { extract_shape_from "$RUBRIC_FILE" "$1"; }
 
+# The Pi ODD block is a separately managed source shape. Refuse a malformed or
+# duplicated source marker rather than concatenating a partial prompt into a
+# package asset.
+extract_unique_shape() {
+  local wanted="$1"
+  awk -v wanted="$wanted" '
+    BEGIN {
+      open_marker = "<!-- shape:" wanted " -->"
+      close_marker = "<!-- /shape:" wanted " -->"
+    }
+    $0 == open_marker {
+      opens++
+      if (inside || opens > 1) bad = 1
+      inside = 1
+      next
+    }
+    $0 == close_marker {
+      closes++
+      if (!inside || closes > 1) bad = 1
+      inside = 0
+      next
+    }
+    index($0, "shape:" wanted) { bad = 1; next }
+    { if (inside) body = body (body == "" ? "" : "\n") $0 }
+    END {
+      if (opens != 1 || closes != 1 || inside || bad || body == "") exit 1
+      print body
+    }
+  ' "$RUBRIC_FILE"
+}
+
 RUBRIC_ITEM4="$(extract_shape list-item)"
 RUBRIC_PROSE="$(extract_shape prose)"
 # Exact prose emitted by the preceding overlay revision (base 8f030e8). Keep this
@@ -604,8 +645,10 @@ RUBRIC_PROSE="$(extract_shape prose)"
 RUBRIC_PROSE_PREVIOUS='Before classification, consume only a valid active/authoritative `RubricConsumerEnvelopeV1` from the state gate. The orchestrator is the sole resolution owner: classify declared task intent first, corroborate changed paths/symbols, reject incompatible intents, then forward its one combined row and canonical-model digest without downstream re-classification. Missing, malformed, duplicate, staging, recovery-required, conflicted, unavailable, or mismatched state MUST block apply/verify with `RubricConsumerBlockedV1` and `recovery_action=run /gentle-sdd-init recovery`; never fall back to rubric `default` or binary `strict_tdd`. Binary `strict_tdd` is permitted only when no rubric state has ever been declared or observed. Managed forwarding surfaces are Claude Code lazy prose; Pi, Cursor, VS Code Copilot, Gemini CLI, and Antigravity lists; and OpenCode JSON. Codex is `rubric-none`; Kimi is explicitly current-scope unmanaged.'
 CACHE_NEW="$(extract_shape cache-sentence)"
 RUBRIC_PI_WORKFLOW="$(extract_shape pi-workflow)"
+RUBRIC_PI_ODD_FORWARDING="$(extract_unique_shape pi-odd-forwarding)" || {
+  echo "FATAL: invalid pi-odd-forwarding shape in $RUBRIC_FILE" >&2; exit 1; }
 
-[ -n "$RUBRIC_ITEM4" ] && [ -n "$RUBRIC_PROSE" ] && [ -n "$RUBRIC_PROSE_PREVIOUS" ] && [ -n "$CACHE_NEW" ] && [ -n "$RUBRIC_PI_WORKFLOW" ] || {
+[ -n "$RUBRIC_ITEM4" ] && [ -n "$RUBRIC_PROSE" ] && [ -n "$RUBRIC_PROSE_PREVIOUS" ] && [ -n "$CACHE_NEW" ] && [ -n "$RUBRIC_PI_WORKFLOW" ] && [ -n "$RUBRIC_PI_ODD_FORWARDING" ] || {
   echo "FATAL: $RUBRIC_FILE is missing one of the shape blocks" >&2; exit 1; }
 
 # First line of item 4 -- the marker used to locate the numbered-list block.
@@ -635,6 +678,14 @@ STRICT TDD MODE IS ACTIVE. Test runner: <command>. Follow RED, GREEN, TRIANGULAT
 ```
 
 Do not rely on the child agent to discover this independently.'
+
+# Official gentle-shell v3.1.0 anchors for the package-owned ODD delegation
+# surface. Packages that do not carry the ODD section are deliberately n/a.
+PI_ODD_HEADING='### Organic Driven Development (ODD)'
+PI_ODD_CHECKS='#### Checks and candidate consent'
+PI_ODD_DELEGATION='### Delegation Rules'
+PI_ODD_MARK_OPEN='<!-- gentle-ai:pi-odd-forwarding -->'
+PI_ODD_MARK_CLOSE='<!-- /gentle-ai:pi-odd-forwarding -->'
 
 # The weaker caching sentence some hosts carry. Upgraded in place where present,
 # so the rubric is explicitly part of what gets cached. Never invented where absent.
@@ -770,6 +821,83 @@ pi_rubric_workflow_transform() {
         exit 0
       }
     '
+}
+
+# ---------------------------------------------------------------------------
+# Pi ODD delegation forwarding.
+#
+# This overlay owns only its marker-delimited parent instruction. The three
+# release anchors remain installer-owned and are validated before a replacement;
+# package versions without the ODD section return 2 (n/a), not an error.
+# ---------------------------------------------------------------------------
+pi_odd_forwarding_transform() {
+  BLOCK="$RUBRIC_PI_ODD_FORWARDING" HEADING="$PI_ODD_HEADING" CHECKS="$PI_ODD_CHECKS" \
+  DELEGATION="$PI_ODD_DELEGATION" OPEN_MARKER="$PI_ODD_MARK_OPEN" CLOSE_MARKER="$PI_ODD_MARK_CLOSE" \
+    awk '
+      BEGIN {
+        block = ENVIRON["BLOCK"]; heading = ENVIRON["HEADING"]
+        checks = ENVIRON["CHECKS"]; delegation = ENVIRON["DELEGATION"]
+        open_marker = ENVIRON["OPEN_MARKER"]; close_marker = ENVIRON["CLOSE_MARKER"]
+      }
+      { line[NR] = $0 }
+      END {
+        n = NR
+        for (i = 1; i <= n; i++) {
+          if (line[i] == heading) { headings++; heading_line = i }
+          if (line[i] == checks) { check_sections++; checks_line = i }
+          if (line[i] == delegation) { delegations++; delegation_line = i }
+          if (line[i] == open_marker) { opens++; open_line = i }
+          if (line[i] == close_marker) { closes++; close_line = i }
+          if (index(line[i], "gentle-ai:pi-odd-forwarding") && line[i] != open_marker && line[i] != close_marker) malformed_marker = 1
+        }
+
+        # Older packages have no ODD section or managed marker. Leave them fully
+        # untouched; their absence is not an unsupported or broken variant.
+        if (headings == 0 && opens == 0 && closes == 0 && !malformed_marker) exit 2
+
+        if (headings != 1 || check_sections != 1 || delegations != 1 || malformed_marker || \
+            heading_line >= checks_line || checks_line >= delegation_line) exit 1
+        if (opens != closes || opens > 1 || (opens == 1 && open_line >= close_line)) exit 1
+        if (opens == 1 && (open_line <= checks_line || close_line >= delegation_line || \
+                           heading_line >= open_line || checks_line >= open_line || delegation_line <= close_line)) exit 1
+
+        for (i = 1; i <= n; i++) {
+          if (opens == 1 && i == open_line) {
+            print block
+            continue
+          }
+          if (opens == 1 && i > open_line && i <= close_line) continue
+          if (opens == 0 && i == delegation_line) {
+            print block
+            print ""
+          }
+          print line[i]
+        }
+        exit 0
+      }
+    '
+}
+
+odd_forwarding_apply() {
+  local file="$1" tmp snapshot rc
+  tmp="$(target_tmp "$file")" || return 4
+  snapshot="$(target_tmp "$file")" || { rm -f -- "$tmp"; return 4; }
+  if ! safe_target "$file" || ! cp -p -- "$file" "$snapshot"; then
+    rm -f -- "$tmp" "$snapshot"; return 4
+  fi
+  pi_odd_forwarding_transform < "$snapshot" > "$tmp"; rc=$?
+  case "$rc" in
+    0) ;;
+    2) rm -f -- "$tmp" "$snapshot"; return 2 ;;
+    *) rm -f -- "$tmp" "$snapshot"; return 3 ;;
+  esac
+  if cmp -s "$tmp" "$snapshot"; then
+    rm -f -- "$tmp" "$snapshot"; return 1
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then rm -f -- "$tmp" "$snapshot"; return 0; fi
+  commit_replacement "$file" "$snapshot" "$tmp"; rc=$?
+  rm -f -- "$tmp" "$snapshot"
+  return "$rc"
 }
 
 # ---------------------------------------------------------------------------
@@ -1472,7 +1600,7 @@ while IFS= read -r host; do
     unresolved_rel="$rel"
     if ! rel="$(resolve_target_rel "$host" "$rel")" || [ -z "$rel" ]; then
       case "$host:$unresolved_rel" in
-        pi:@pi-gentle-pi-workflow@|pi:@pi-gentle-pi-sdd-init@)
+        pi:@pi-gentle-pi-workflow@|pi:@pi-gentle-pi-delegation@|pi:@pi-gentle-pi-sdd-init@)
           report "PACKAGE-TARGET-CONFIG-FAILURE" "$surface" "$unresolved_rel (ambiguous, conflicting, or unsupported gentle-pi package source)"
           PACKAGE_TARGET_FAILED=1
           break 2
@@ -1488,7 +1616,11 @@ while IFS= read -r host; do
     short="${rel}"
 
     if [ ! -e "$file" ] && [ ! -L "$file" ]; then
-      report "MISSING-FILE" "$surface" "$short"
+      if [ "$surface" = pi-odd-forwarding ]; then
+            report "n/a" "odd-rubric" "$short (selected package has no ODD delegation asset)"
+            continue
+          fi
+          report "MISSING-FILE" "$surface" "$short"
       MISSING_ANCHOR=1
       continue
     fi
@@ -1551,7 +1683,20 @@ while IFS= read -r host; do
           *) report "WRITE-FAILED" "rubric-tdd" "$short"; OPERATION_FAILED=1 ;;
         esac
         ;;
-      rubric-json)
+      pi-odd-forwarding)
+            odd_forwarding_apply "$file"; rc=$?
+            case "$rc" in
+              0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "odd-rubric" "$short"; PENDING=1
+                 else report "applied" "odd-rubric" "$short"; CHANGED=1; fi ;;
+              1) report "already-applied" "odd-rubric" "$short" ;;
+              2) report "n/a" "odd-rubric" "$short (selected package has no ODD section)" ;;
+              3) report "ANCHOR-NOT-FOUND" "odd-rubric" "$short"; MISSING_ANCHOR=1 ;;
+              4) report "WRITE-FAILED" "odd-rubric" "$short"; OPERATION_FAILED=1 ;;
+              5) report "TARGET-DRIFT" "odd-rubric" "$short"; TARGET_DRIFT=1 ;;
+              *) report "WRITE-FAILED" "odd-rubric" "$short"; OPERATION_FAILED=1 ;;
+            esac
+            ;;
+          rubric-json)
         rubric_apply_json "$file"; rc=$?
         case "$rc" in
           0) if [ "$CHECK_ONLY" -eq 1 ]; then report "PENDING" "rubric-tdd" "$short"; PENDING=1

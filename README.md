@@ -10,7 +10,10 @@ prompt assets are licensed separately; see [Third-Party Notices](THIRD_PARTY_NOT
 
 Active-surface compatibility was reverified with official Gentle AI `2.6.0` on Linux
 with `gentle-pi@2.4.0`; final `2.5.0` and `2.5.0-rc.3` OpenCode shapes remain
-accepted as bounded legacy compatibility forms.
+accepted as bounded legacy compatibility forms. The separate Pi ODD transform is
+fixture-tested against a bounded `Gentleman-Programming/gentle-shell` `v3.1.0`
+source excerpt; that does not claim a package installation or full cross-host
+Gentle AI 3.x compatibility.
 
 ## Private Pi candidate composer
 
@@ -226,7 +229,7 @@ commentary, whereas item 4 of a list whose heading says **(MANDATORY)** inherits
 force. The overlay originally injected the loose-paragraph form; `apply.sh` now
 **migrates** it to the numbered form wherever it finds it.
 
-The delta file carries four blocks, each fenced by `<!-- shape:NAME -->` markers:
+The delta file carries five blocks, each fenced by `<!-- shape:NAME -->` markers:
 
 | Block | Used for |
 | --- | --- |
@@ -234,6 +237,7 @@ The delta file carries four blocks, each fenced by `<!-- shape:NAME -->` markers
 | `prose` | the condensed paragraph — the one host that has no list (see below) |
 | `cache-sentence` | the canonical-policy cache sentence: it caches policy once per session while requiring an afresh declared-intent resolution for every distinct slice |
 | `pi-workflow` | the marker-delimited Pi package workflow forwarding block after its binary Strict TDD contract |
+| `pi-odd-forwarding` | parent-only ODD rubric forwarding in Pi's package-owned delegation asset |
 
 The canonical wording of `list-item` and `cache-sentence` is maintained in
 `deltas/rubric-tdd.md`, which is the overlay's source of truth.
@@ -330,6 +334,23 @@ the overlay reports that target instead of falling back. Neither mapping reads o
 `APPEND_SYSTEM.md`. The package assets are replaced by `gentle-pi`/package updates, so
 run `./apply.sh --check` and reapply after each one.
 
+### Pi 3.1 ODD forwarding (bounded)
+
+For the released `Gentleman-Programming/gentle-shell` `v3.1.0` delegation shape,
+the overlay optionally manages only its marker-delimited parent instruction in the
+settings-selected package's `assets/orchestrator-delegation.md`. The native ODD
+section, task tracking, full project Engram mirror, resume reconciliation, generic
+worker consumption, and RDD sequence remain upstream-owned. The overlay resolves an
+approved rubric per task/resume and delivers its resolved instruction to the parent
+launch prompt; it does not alter generic workers or prove their autonomous behavior.
+
+A package without that ODD asset or section is reported `n/a` and otherwise retains
+its existing behavior. Hermetic tests use a bounded exact released excerpt and verify
+placement, refresh, idempotence, and preservation of unmanaged text. They do not run
+against an installed package, execute a model, prove policy enforcement, or establish
+full Gentle AI 3.x compatibility. The released 3.1.0 SDD Strict TDD anchor matches
+the existing legacy SDD binary anchor only as shape evidence.
+
 ### 6. OpenCode Engram injection — idempotent fallback
 
 OpenCode already receives the full Engram protocol from `AGENTS.md`. Its Engram
@@ -347,6 +368,7 @@ dynamic save nudge and the rest of the plugin remain installer-managed.
 | `claude-code` | `~/.claude/skills/_shared/sdd-orchestrator-workflow.md` | — | **prose** — this surface has no numbered list |
 | `pi` | settings-selected gentle-pi `sdd-init`: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/agents/sdd-init.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md` | executable `sdd-init` asset | —; the SDD-init rubric producer contract is marker-delimited |
 | `pi` | settings-selected gentle-pi workflow: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md` | — | marker-delimited project-rubric forwarding after the binary Strict TDD contract; both Pi assets use the same selected package root and ambiguous roots fail closed |
+| `pi` | settings-selected gentle-pi delegation asset: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/orchestrator-delegation.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md` | — | optional `v3.1.0` ODD shape: marker-delimited parent-only rubric forwarding; absent ODD assets/sections are `n/a` |
 | `opencode` | `~/.config/opencode/AGENTS.md` | marker block | — |
 | `opencode` | `~/.config/opencode/opencode.json` | — | item 4, via `jq` into `.agent["gentle-orchestrator"].prompt` |
 | `opencode` | `~/.config/opencode/skills/sdd-init/SKILL.md`, `~/.config/opencode/skills/sdd-init/references/init-details.md` | managed `sdd-init` skill and reference; the skill is transformed before `## Decision Gates` | — |

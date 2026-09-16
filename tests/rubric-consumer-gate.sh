@@ -166,11 +166,38 @@ test_intent_scope_forwarding_contract() (
   done
 )
 
+# shellcheck disable=SC2016 # This contract compares literal Markdown strings containing backticks.
+test_pi_odd_forwarding_contract() (
+  local output text
+  output="$TMP_ROOT/pi-odd-forwarding.md"
+  extract_shape "$ROOT/deltas/rubric-tdd.md" pi-odd-forwarding > "$output"
+  [ -s "$output" ] || fail 'Pi ODD forwarding shape is missing' || exit 1
+  for text in \
+    'This is a parent-only ODD forwarding instruction.' \
+    'When an approved rubric exists, resolve its declared per-work intent rules through that rubric' \
+    'canonical locator and declared matching, precedence, and exceptions' \
+    'Resolve again for every distinct ODD task and every resume before launching its worker.' \
+    'Forward the resolved `strict-tdd`, `standard`, or `skip` MODE, the canonical rubric source, applicable exact commands, skill paths, and required disciplines/evidence' \
+    '`strict-tdd` means a full test-first cycle and maps native binary test-first activation to enabled.' \
+    '`standard` requires declared evidence without mandatory test-first ordering and maps that binary activation to disabled while preserving every applicable check and evidence obligation.' \
+        '`skip` has no automated test gate unless applicable rows union evidence; it maps test-first activation to disabled while preserving that union and native ordinary validation.' \
+        'Binary test-first activation represents sequencing only; it never replaces the resolved MODE or complete evidence obligation.' \
+        'For every supported resolved row, forward native ODD inputs: test-first activation, canonical source, and exact runner.' \
+        'runner is the one declared applicable test-first command for `strict-tdd`, and `not-applicable` for `standard` or `skip` rather than an invented command.' \
+        'If an exact ODD binding cannot be supplied, stop only that dependent worker launch and ask focused clarification; never repurpose an SDD command.' \
+    'If no approved rubric exists, use the existing configured or user-selected ODD mode, source, and exact runner.' \
+    'do not invoke `sdd-init` to resolve ODD TDD.' \
+    'The task document records resolved context and evidence; it does not replace the authoritative policy.' \
+    'Do not alter native ODD tracking, the full project Engram mirror, resume reconciliation, generic workers, or the RDD sequence.'; do
+    grep -Fq "$text" "$output" || fail "Pi ODD forwarding lacks: $text" || exit 1
+  done
+)
 
 run() { if "$1"; then pass "${1#test_}"; else FAIL=$((FAIL + 1)); fi; }
 run test_consumer_wording_uses_canonical_policy
 run test_temporary_home_host_goldens
 run test_pi_policy_regression_is_rejected
 run test_intent_scope_forwarding_contract
+run test_pi_odd_forwarding_contract
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

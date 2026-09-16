@@ -416,13 +416,39 @@ write_pi_workflow_220_with_gap() {
   '
 }
 
+# Bounded, verbatim excerpt from Gentleman-Programming/gentle-shell tag v3.1.0,
+# assets/orchestrator-delegation.md. It is a transform fixture, not full-runtime proof.
+write_pi_delegation_310_fixture() {
+  cat <<'EOF'
+### Organic Driven Development (ODD)
+
+These instructions apply to organic work, not explicitly selected SDD. Preserve the existing direct/delegated topology and one parent owner; do not introduce an ODD CLI, specialized agent, or execution harness.
+
+#### Authorization and progress
+
+Investigation, explanation, review, comparison, and proposal-only requests remain read-only: no writer, apply, or implementation artifacts. Ambiguous or conditional change intent requires one clarification; stop and wait. Explore existing code and requirements proportionately first. Research findings and automatic execution pace never authorize mutations.
+
+#### Checks and candidate consent
+
+Resolve effective TDD on/off from existing project/session configuration or explicit user choice; retain its source and exact test runner. Record resolved mode, source, and runner in the feature document when present. Tests or frameworks being present does not enable TDD. Forward mode, source, and runner on every implementation delegation; refresh on resume. When enabled, require observed RED before implementation, GREEN, then REFACTOR; never invent evidence. When disabled, run ordinary functional checks, not no checks. If mode is unknown/conflicting or the runner is missing, disclose and resolve only the ambiguity affecting the next action; never invent precedence or a command, and never invoke sdd-init to determine ODD TDD.
+
+Run applicable functional checks per task, not an RDD cycle per TODO checkbox. Preserve the RDD-aware Verification rule below and coordinate native review at the applicable deliverable candidate boundary, not every task update. Checklists grant no approval or receipt and never skip an existing delivery gate.
+
+### Delegation Rules
+
+Core question: does this inflate parent context without need?
+EOF
+}
+
 PI_GIT_PACKAGE_ROOT_REL='.pi/agent/git/github.com/Gentleman-Programming/gentle-pi'
 PI_NPM_PACKAGE_ROOT_REL='.pi/agent/npm/node_modules/gentle-pi'
 PI_GIT_WORKFLOW_REL="$PI_GIT_PACKAGE_ROOT_REL/assets/sdd-orchestrator-workflow.md"
 PI_NPM_WORKFLOW_REL="$PI_NPM_PACKAGE_ROOT_REL/assets/sdd-orchestrator-workflow.md"
 PI_GIT_INIT_REL="$PI_GIT_PACKAGE_ROOT_REL/assets/agents/sdd-init.md"
 PI_NPM_INIT_REL="$PI_NPM_PACKAGE_ROOT_REL/assets/agents/sdd-init.md"
+PI_NPM_DELEGATION_REL="$PI_NPM_PACKAGE_ROOT_REL/assets/orchestrator-delegation.md"
 PI_WORKFLOW_PLACEHOLDER='@pi-gentle-pi-workflow@'
+PI_DELEGATION_PLACEHOLDER='@pi-gentle-pi-delegation@'
 PI_SDD_INIT_PLACEHOLDER='@pi-gentle-pi-sdd-init@'
 
 prepare_pi_package_home() {
@@ -436,6 +462,12 @@ write_pi_workflow_at() {
   local file="$1"
   mkdir -p "$(dirname -- "$file")"
   write_pi_workflow_220_fixture > "$file"
+}
+
+write_pi_delegation_at() {
+  local file="$1"
+  mkdir -p "$(dirname -- "$file")"
+  write_pi_delegation_310_fixture > "$file"
 }
 
 write_pi_init_at() {
@@ -1189,7 +1221,138 @@ test_pi_workflow_rubric_forwarding_contract() (
   cmp -s "$stale_before" "$stale_backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" || fail 'Pi stale workflow backup is not the stale original' || exit 1
 )
 
-test_pi_workflow_refuses_malformed_or_stale_structure() (
+test_pi_odd_forwarding_contract() (
+      local home="$TMP_ROOT/pi-odd-home" backups="$TMP_ROOT/pi-odd-backups" stale_backups="$TMP_ROOT/pi-odd-stale-backups"
+      local append init_file workflow delegation before_append before_delegation expected output after_first stale_before preserved
+      local old_home="$TMP_ROOT/pi-odd-old-home" old_backups="$TMP_ROOT/pi-odd-old-backups" old_output="$TMP_ROOT/pi-odd-old-output.txt"
+      local refusal_home="$TMP_ROOT/pi-odd-refusal-home" refusal_backups="$TMP_ROOT/pi-odd-refusal-backups" file before name
+      append="$home/.pi/agent/APPEND_SYSTEM.md"
+      init_file="$home/$PI_NPM_INIT_REL"
+      workflow="$home/$PI_NPM_WORKFLOW_REL"
+      delegation="$home/$PI_NPM_DELEGATION_REL"
+      before_append="$TMP_ROOT/pi-odd-append-before.md"
+      before_delegation="$TMP_ROOT/pi-odd-before.md"
+      expected="$TMP_ROOT/pi-odd-expected.md"
+      output="$TMP_ROOT/pi-odd-output.txt"
+      after_first="$TMP_ROOT/pi-odd-after-first.md"
+      stale_before="$TMP_ROOT/pi-odd-stale-before.md"
+      mkdir -p "$home/.gentle-ai" "$(dirname -- "$append")" "$(dirname -- "$init_file")" "$(dirname -- "$workflow")" "$(dirname -- "$delegation")"
+      printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+      printf '%s\n' '<!-- installer-owned Pi APPEND -->' 'do not modify' > "$append"
+      write_pi_init_stock > "$init_file"
+      write_pi_workflow_220_fixture > "$workflow"
+      write_pi_delegation_310_fixture > "$delegation"
+      write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@3.1.0"]}'
+      cp -- "$append" "$before_append"
+      cp -- "$delegation" "$before_delegation"
+
+      load_overlay "$home" "$backups"
+      host_rows | grep -Fqx "pi|pi-odd-forwarding|$PI_DELEGATION_PLACEHOLDER" || fail 'Pi ODD delegation row is not resolver-backed' || exit 1
+      [ "$(resolve_target_rel pi "$PI_DELEGATION_PLACEHOLDER")" = "$PI_NPM_DELEGATION_REL" ] || fail 'Pi ODD delegation did not resolve the configured package root' || exit 1
+      pi_odd_forwarding_transform < "$delegation" > "$expected" || fail 'released ODD fixture was refused' || exit 1
+      grep -Fqx '<!-- gentle-ai:pi-odd-forwarding -->' "$expected" || fail 'Pi ODD opening marker is missing' || exit 1
+      grep -Fqx '<!-- /gentle-ai:pi-odd-forwarding -->' "$expected" || fail 'Pi ODD closing marker is missing' || exit 1
+      awk '/^<!-- gentle-ai:pi-odd-forwarding -->$/{marker=NR} /^### Delegation Rules$/{delegation=NR} END {exit !(marker && delegation && marker < delegation)}' "$expected" || fail 'Pi ODD block was not placed before native delegation rules' || exit 1
+
+      HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
+      [ "$?" -eq 2 ] || fail 'Pi ODD --check did not report pending work' || exit 1
+      grep -Fq 'PENDING        odd-rubric' "$output" || fail 'Pi ODD --check did not report its pending package asset' || exit 1
+      cmp -s "$delegation" "$before_delegation" || fail 'Pi ODD --check changed the package asset' || exit 1
+      cmp -s "$append" "$before_append" || fail 'Pi APPEND changed during ODD --check' || exit 1
+      [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md" ] || fail 'Pi ODD --check created a backup' || exit 1
+      [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND --check created a backup' || exit 1
+
+      HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
+      cmp -s "$delegation" "$expected" || fail 'Pi ODD apply did not install the canonical forwarding block' || exit 1
+      cmp -s "$before_delegation" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md" || fail 'Pi ODD backup is not the original asset' || exit 1
+      cmp -s "$append" "$before_append" || fail 'Pi APPEND changed during ODD apply' || exit 1
+      [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND was backed up during ODD apply' || exit 1
+      grep -Fq 'This is a parent-only ODD forwarding instruction.' "$delegation" || fail 'Pi ODD parent-only contract is missing' || exit 1
+      # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
+      grep -Fq 'do not invoke `sdd-init` to resolve ODD TDD.' "$delegation" || fail 'Pi ODD contract introduced an init requirement' || exit 1
+      # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
+      grep -Fq '`strict-tdd` means a full test-first cycle and maps native binary test-first activation to enabled.' "$delegation" || fail 'Pi ODD strict-tdd contract is missing' || exit 1
+      # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
+      grep -Fq '`standard` requires declared evidence without mandatory test-first ordering and maps that binary activation to disabled while preserving every applicable check and evidence obligation.' "$delegation" || fail 'Pi ODD standard-mode contract is missing' || exit 1
+      # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
+      grep -Fq '`skip` has no automated test gate unless applicable rows union evidence; it maps test-first activation to disabled while preserving that union and native ordinary validation.' "$delegation" || fail 'Pi ODD skip-mode contract is missing' || exit 1
+      grep -Fq 'For every supported resolved row, forward native ODD inputs: test-first activation, canonical source, and exact runner.' "$delegation" || fail 'Pi ODD native-input contract is missing' || exit 1
+      # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
+      grep -Fq 'The exact runner is the one declared applicable test-first command for `strict-tdd`, and `not-applicable` for `standard` or `skip` rather than an invented command.' "$delegation" || fail 'Pi ODD runner contract is missing' || exit 1
+      grep -Fq 'This prompt delivery does not prove autonomous worker compliance.' "$delegation" || fail 'Pi ODD prompt-delivery limit is missing' || exit 1
+
+      if ! HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"; then
+        fail 'Pi ODD clean --check did not return 0' || exit 1
+      fi
+      cp -- "$delegation" "$after_first"
+      HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
+      cmp -s "$delegation" "$after_first" || fail 'second Pi ODD apply was not byte-idempotent' || exit 1
+
+      preserved="$TMP_ROOT/pi-odd-preserved.md"
+      awk '$0 == "<!-- /gentle-ai:pi-odd-forwarding -->" { print; print "unmanaged separator text"; next } { print }' "$delegation" > "$preserved"
+      cp -- "$preserved" "$delegation"
+      load_overlay "$home" "$TMP_ROOT/pi-odd-preserved-backups"
+      expect_rc 1 odd_forwarding_apply "$delegation" || exit 1
+      awk '/^<!-- gentle-ai:pi-odd-forwarding -->$/{marker=NR} /^unmanaged separator text$/{text=NR} END {exit !(marker && text && marker < text)}' "$delegation" || fail 'Pi ODD refresh moved unmanaged text across its marker' || exit 1
+      cp -- "$after_first" "$delegation"
+
+      sed 's/This is a parent-only ODD forwarding instruction./Stale ODD forwarding instruction./' "$delegation" > "$TMP_ROOT/pi-odd-stale.md"
+      cp -- "$TMP_ROOT/pi-odd-stale.md" "$delegation"
+      cp -- "$delegation" "$stale_before"
+      HOME="$home" GENTLE_AI_BACKUP_ROOT="$stale_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
+      cmp -s "$delegation" "$expected" || fail 'Pi ODD stale marker body was not canonically refreshed' || exit 1
+      cmp -s "$stale_before" "$stale_backups/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md" || fail 'Pi ODD stale backup is not the stale original' || exit 1
+
+      mkdir -p "$old_home/.gentle-ai" "$(dirname -- "$old_home/$PI_NPM_INIT_REL")" "$(dirname -- "$old_home/$PI_NPM_WORKFLOW_REL")"
+      printf '%s\n' '{"installed_agents":["pi"]}' > "$old_home/.gentle-ai/state.json"
+      write_pi_init_stock > "$old_home/$PI_NPM_INIT_REL"
+      write_pi_workflow_220_fixture > "$old_home/$PI_NPM_WORKFLOW_REL"
+      write_pi_package_settings "$old_home" '{"packages":["npm:gentle-pi@2.4.0"]}'
+      HOME="$old_home" GENTLE_AI_BACKUP_ROOT="$old_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$old_output"
+      [ "$?" -eq 2 ] || fail 'old Pi package without ODD was declared broken' || exit 1
+      grep -Fq 'n/a            odd-rubric' "$old_output" || fail 'old Pi package without ODD was not reported n/a' || exit 1
+      [ ! -e "$old_backups" ] || fail 'old Pi ODD absence created a backup' || exit 1
+
+      mkdir -p "$refusal_home"
+      load_overlay "$refusal_home" "$refusal_backups"
+      CHECK_ONLY=0
+      for name in missing duplicate reordered malformed; do
+        file="$refusal_home/$name.md"
+        case "$name" in
+          missing) write_pi_delegation_310_fixture | sed '/^#### Checks and candidate consent$/d' > "$file" ;;
+          duplicate)
+            {
+              write_pi_delegation_310_fixture
+              printf '%s\n' "$PI_ODD_HEADING"
+            } > "$file"
+            ;;
+          reordered)
+            printf '%s\n' "$PI_ODD_DELEGATION" '' "$PI_ODD_HEADING" '' "$PI_ODD_CHECKS" > "$file"
+            ;;
+          malformed)
+            write_pi_delegation_310_fixture | awk -v marker="$PI_ODD_MARK_OPEN" '$0 == "### Delegation Rules" { print marker " trailing" } { print }' > "$file"
+            ;;
+        esac
+        before="$TMP_ROOT/pi-odd-$name-before.md"
+        cp -- "$file" "$before"
+        expect_rc 3 odd_forwarding_apply "$file" || exit 1
+        cmp -s "$file" "$before" || fail "Pi ODD $name target changed after refusal" || exit 1
+        [ ! -e "$refusal_backups" ] || fail "Pi ODD $name refusal created a backup" || exit 1
+      done
+
+      file="$refusal_home/duplicate-markers.md"
+      {
+        write_pi_delegation_310_fixture | awk '/^### Delegation Rules$/{exit} {print}'
+        printf '%s\n\n%s\n\n%s\n' "$RUBRIC_PI_ODD_FORWARDING" "$RUBRIC_PI_ODD_FORWARDING" "$PI_ODD_DELEGATION"
+      } > "$file"
+      before="$TMP_ROOT/pi-odd-duplicate-markers-before.md"
+      cp -- "$file" "$before"
+      expect_rc 3 odd_forwarding_apply "$file" || exit 1
+      cmp -s "$file" "$before" || fail 'Pi ODD duplicate-marker target changed after refusal' || exit 1
+      [ ! -e "$refusal_backups" ] || fail 'Pi ODD duplicate-marker refusal created a backup' || exit 1
+    )
+
+    test_pi_workflow_refuses_malformed_or_stale_structure() (
   local home="$TMP_ROOT/pi-workflow-refusal-home" backups="$TMP_ROOT/pi-workflow-refusal-backups" file before gap name
   mkdir -p "$home/.pi/agent/npm/node_modules/gentle-pi/assets"
   load_overlay "$home" "$backups"
@@ -2503,6 +2666,7 @@ run test_pi_local_path_identity_fails_closed_before_fallback
 run test_pi_unrelated_helper_does_not_block_unique_npm_layout
 run test_pi_canonical_github_forms_select_git
 run test_pi_workflow_rubric_forwarding_contract
+run test_pi_odd_forwarding_contract
 run test_pi_workflow_refuses_malformed_or_stale_structure
 run test_pi_rc3_append_byte_preservation_and_obsolete_transform_removal
 run test_symlink_refusal

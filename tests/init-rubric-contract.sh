@@ -116,7 +116,7 @@ test_policy_contract() (
 
 validate_rubric_tdd_shape() {
   awk '
-    BEGIN { expected["list-item"] = expected["prose"] = expected["cache-sentence"] = expected["pi-workflow"] = 1 }
+    BEGIN { expected["list-item"] = expected["prose"] = expected["cache-sentence"] = expected["pi-workflow"] = expected["pi-odd-forwarding"] = 1 }
     /^<!-- shape:[a-z][a-z0-9-]* -->$/ {
       name = $0; sub(/^<!-- shape:/, "", name); sub(/ -->$/, "", name)
       if (!(name in expected) || opened[name] || inside) bad = 1
@@ -223,6 +223,34 @@ test_pi_workflow_consumer_contract() (
   grep -Fq 'pi_rubric_workflow_transform()' "$apply" || fail 'Pi workflow transform is missing' || exit 1
   grep -Fq 'opens != closes || opens > 1 || (opens == 1 && open_line >= close_line)' "$apply" || fail 'Pi workflow marker cardinality guard is missing' || exit 1
   grep -Fq 'headings != 1 || archives != 1 || binaries != 1' "$apply" || fail 'Pi workflow structural-anchor guard is missing' || exit 1
+)
+
+test_rubric_tdd_shape_grammar() (
+  local file fixture
+  for fixture in duplicate missing unknown malformed; do
+    file="$TMP_ROOT/rubric-tdd-$fixture.md"
+    case "$fixture" in
+      duplicate)
+        cp -- "$ROOT/deltas/rubric-tdd.md" "$file"
+        printf '%s\n' '<!-- shape:pi-odd-forwarding -->' 'duplicate' '<!-- /shape:pi-odd-forwarding -->' >> "$file"
+        ;;
+      missing)
+        awk '$0 != "<!-- shape:pi-odd-forwarding -->" && $0 != "<!-- /shape:pi-odd-forwarding -->"' \
+          "$ROOT/deltas/rubric-tdd.md" > "$file"
+        ;;
+      unknown)
+        cp -- "$ROOT/deltas/rubric-tdd.md" "$file"
+        printf '%s\n' '<!-- shape:unexpected -->' 'unknown' '<!-- /shape:unexpected -->' >> "$file"
+        ;;
+      malformed)
+        cp -- "$ROOT/deltas/rubric-tdd.md" "$file"
+        printf '%s\n' '<!-- shape:pi-odd-forwarding -->' 'partial' >> "$file"
+        ;;
+    esac
+    if validate_rubric_tdd_shape "$file"; then
+      fail "rubric TDD $fixture fifth-shape defect was accepted" || exit 1
+    fi
+  done
 )
 
 test_pi_policy_defined_forwarding_contract() (
@@ -359,6 +387,7 @@ run test_policy_contract
 run test_human_clarification_contract
 run test_opencode_final_sdd_init_contract
 run test_pi_workflow_consumer_contract
+run test_rubric_tdd_shape_grammar
 run test_pi_policy_defined_forwarding_contract
 run test_delta_shape_grammar
 run test_prompt_procedure_contract

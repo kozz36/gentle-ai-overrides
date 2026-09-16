@@ -40,3 +40,21 @@ When the effective MODE is `strict-tdd`, include `STRICT TDD MODE IS ACTIVE. Fol
 The orchestrator is read-only: never author, generate, mutate, broaden, infer, alter, or rewrite the authoritative policy's rows, commands, bindings, or evidence. It may mechanically match existing policy rows using only those declared rules and must never invent commands or evidence.
 <!-- /gentle-ai:pi-rubric-forwarding -->
 <!-- /shape:pi-workflow -->
+
+<!-- shape:pi-odd-forwarding -->
+<!-- gentle-ai:pi-odd-forwarding -->
+### Approved Rubric Forwarding for ODD
+
+This is a parent-only ODD forwarding instruction. It supplements the native Organic Driven Development topology; it does not create an ODD agent, parser, schema, compiler, task store, or worker-side policy resolver.
+
+When an approved rubric exists, resolve its declared per-work intent rules through that rubric's canonical locator and declared matching, precedence, and exceptions. Resolve again for every distinct ODD task and every resume before launching its worker. Forward the resolved `strict-tdd`, `standard`, or `skip` MODE, the canonical rubric source, applicable exact commands, skill paths, and required disciplines/evidence in the parent launch prompt. Preserve declared phase bindings: an unknown, conflicting, or ambiguous binding, command, source, matching rule, precedence, exception, or MODE requires focused clarification; never invent a generic ODD command, precedence, exception, implicit policy activation, or MODE coercion.
+
+`strict-tdd` means a full test-first cycle and maps native binary test-first activation to enabled. Require observed RED, GREEN, TRIANGULATE, and REFACTOR with its declared obligations. `standard` requires declared evidence without mandatory test-first ordering and maps that binary activation to disabled while preserving every applicable check and evidence obligation. `skip` has no automated test gate unless applicable rows union evidence; it maps test-first activation to disabled while preserving that union and native ordinary validation. Binary test-first activation represents sequencing only; it never replaces the resolved MODE or complete evidence obligation.
+
+For every supported resolved row, forward native ODD inputs: test-first activation, canonical source, and exact runner. The canonical source is the rubric locator. The exact runner is the one declared applicable test-first command for `strict-tdd`, and `not-applicable` for `standard` or `skip` rather than an invented command. Forward the actual MODE and all phase-applicable exact commands, skill paths, and evidence alongside those native inputs; this uses existing declared policy data and requires no new schema. If an exact ODD binding cannot be supplied, stop only that dependent worker launch and ask focused clarification; never repurpose an SDD command.
+
+If no approved rubric exists, use the existing configured or user-selected ODD mode, source, and exact runner. Tests or frameworks being present do not activate TDD. Continue ordinary functional checks when native test-first activation is disabled, and do not invoke `sdd-init` to resolve ODD TDD. An absent rubric is not invalid or conflicting. Required-but-missing, invalid, ambiguous, or conflicting approved-rubric state is a clarification boundary, not fallback authority.
+
+The task document records resolved context and evidence; it does not replace the authoritative policy. Refresh the resolved instruction before each distinct task or resume, while retaining native ODD tracking, the full project Engram mirror, and parent reconciliation. Do not alter native ODD tracking, the full project Engram mirror, resume reconciliation, generic workers, or the RDD sequence. This prompt delivery does not prove autonomous worker compliance.
+<!-- /gentle-ai:pi-odd-forwarding -->
+<!-- /shape:pi-odd-forwarding -->
