@@ -2531,7 +2531,6 @@ run test_neutral_external_profile_lifecycle
 run test_fresh_260_active_layout_lifecycle
 
 bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
-bash "$ROOT/tests/rubric-compiler-core.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 bash "$ROOT/tests/rubric-engram-recovery.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 bash "$ROOT/tests/rubric-consumer-gate.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 bash "$ROOT/tests/rubric-compiler-benchmark.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Hermetic contract checks for the producer-side rubric compiler boundary.
+# Historical local-fixture simulation of a rejected producer-side compiler model.
+# It is retained for design context only, is not runtime/producer proof, and is not
+# invoked by tests/run.sh. The prompt procedure has no such compiler boundary.
 set -uo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

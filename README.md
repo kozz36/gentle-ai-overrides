@@ -240,22 +240,26 @@ The canonical wording of `list-item` and `cache-sentence` is maintained in
 
 ### 4. `deltas/sdd-init-rubric.md` — the TDD policy producer
 
-This isolated spike keeps `sdd-init` as the sole project-policy writer. It makes
-a minimal consumer wording alignment in `deltas/rubric-tdd.md` so active rubrics
-resolve all applicable rows consistently; the consumer remains read-only. The
-managed sections detect a closed set of satisfiable evidence methods, preserve
-binary `strict_tdd` when sufficient, and block on an explicit `strict|rubric`
-choice when project-specific, scope-aware rules are necessary. The standalone
-contract suite validates these static policy and delta-shape guarantees without
-loading `apply.sh`; `tests/run.sh` covers the cross-host transform behavior.
+This prompt procedure keeps `sdd-init` as the sole project-policy writer while
+the consumer remains read-only. It detects the closed set of satisfiable evidence
+methods, displays an actual project-derived candidate and checksum before the
+`strict|rubric` representation choice, then requires separate explicit approval
+of the complete selected candidate before a write. Re-init preserves manual rows
+and regenerates only generated rows; candidate/source drift invalidates approval.
 
-The contract requires project-derived signatures, a `strict_tdd`-derived default
-row, strictest-wins matching with unioned obligations, equivalent mode-specific
-persistence, and confirmation-gated re-init drift maintenance. `apply.sh`
-installs it before the exact SDD-init anchors `## Decision Gates`, `## Output
-Templates`, and Pi's `## Memory Contract`, which were reverified unchanged on
-official Gentle AI 2.6.0 surfaces with `gentle-pi@2.4.0`; incomplete or ambiguous
-managed markers and anchors fail closed.
+This is not an implemented compiler, CAS protocol, transaction manager, or
+cross-backend atomic publication system. With ordinary available read/write/bash
+capabilities, the prompt preserves a preimage, writes only after exact approval,
+and independently reads back the selected canonical source; failures block and
+report rather than rolling back automatically. The standalone contract suite is
+static prompt/delta evidence only: it does not prove model execution, backend
+availability, installation, or runtime publication. `apply.sh` continues to place
+the marker-delimited contract before the exact SDD-init anchors and fails closed
+on incomplete or ambiguous managed markers and anchors.
+
+The producer uses a two-level delivery for one candidate: reader view first in the user's conversation language, then complete technical artifacts in English unless an explicit user/project artifact-language convention says otherwise. The reader view is a concise Markdown overview with a compact work-type/MODE/key-obligation table, material differences, actionable gaps/risks, named canonical destination, and exact full-candidate identity/checksum; it does not dump YAML or a wide command/tool-proof ledger by default, but must still expose meaningful exceptions, blocking evidence gaps, destructive differences, and approval scope. Complete technical artifacts include full policy Markdown with every row, exact commands, bindings, independent tool proofs, precedence/exceptions/default/mixed/test-only rationale, plus full serialized YAML when applicable; technical identifiers and executable commands are never translated. Full details are accessible through verified artifact paths/references or on request before approval. The reader view is not a second policy or canonical source. Explicit approval covers the complete full candidate identified by its checksum, not merely the reader overview; the checksum identifies approved bytes and selected destinations but does not prove semantic equivalence. OpenSpec persists YAML only, Engram persists canonical-topic full Markdown only, hybrid persists equivalent content in both only when selected, and rendering the Markdown reader view never writes Engram implicitly. None returns the full content without activation and keeps complete details inspectable on request or an appropriate surface. Readback and final delivery use the concise localized reader view plus full canonical references, not a wall of YAML.
+
+The project-derived catalog always accounts for new behavior, bugfixes, migrations, mechanical changes, refactors, docs, CI, configuration, executable scripts, dependencies, and tests-only maintenance. Declared intent selects a mode while project scope selects command bindings; test-only scope evidence never infers production intent, and mixed intent uses explicit exceptions before the applicable highest mode. Unknown essential evidence, unmatched executable/CI/config work, and conflicts with preserved manual path rules require visible rationale or clarification rather than fabricated bindings or a silent no-evidence outcome.
 
 OpenCode accepts exactly four hidden `sdd-init` shapes in strict `opencode.json`:
 

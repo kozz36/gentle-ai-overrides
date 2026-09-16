@@ -1,8 +1,17 @@
 # Operational Rubric Producer: Theoretical Model
 
-**Status:** selected shipping baseline of source-faithful theory for the stock
-canonical producer contract and retained parent gates; neither an OpenSpec approval nor activation claim.
-Deferred prototype-only proposal, supplied-C publication, diagnostic assembly, private fixtures, and the 109-operation Pi unit are excluded.
+**Status:** historical, non-active design context for a theoretical canonical
+producer contract; neither an OpenSpec approval nor activation claim. Deferred
+prototype-only proposal, supplied-C publication, diagnostic assembly, private
+fixtures, and the 109-operation Pi unit are excluded.
+
+**Superseding status note:** The current overlay contract in
+`deltas/sdd-init-rubric.md` is a prompt procedure: it displays the actual candidate,
+requires exact-content approval, writes only with available ordinary capabilities,
+and independently reads back the selected source. It does not implement or validate
+the compiler, CAS, transaction, recovery, or cross-backend guarantees theorized
+below. This note changes the current status only; it does not rewrite the historical
+model or recast its assumptions as validated facts.
 
 ## Answer and quick path
 
