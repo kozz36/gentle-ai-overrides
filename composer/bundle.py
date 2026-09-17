@@ -8,12 +8,14 @@ import hashlib
 import json
 import re
 
-from .agents import ROLES, RULE_VERSION as AGENT_RULE, compose_agent
+from .agents import RULE_VERSION as AGENT_RULE, compose_agent
 from .overlay import RULE_VERSION as INIT_RULE, render_pi_init
+from .profiles import V1_PROFILE
 from .storage import MAX_BYTES
 
-SCHEMA = "deterministic-assets/v1"
-TARGETS = tuple(sorted([f"agents/sdd-{role}.md" for role in ROLES] + ["chains/sdd-verify.chain.md"]))
+SCHEMA = V1_PROFILE.schema
+# Public compatibility alias for the historical deterministic-assets/v1 inventory.
+TARGETS = V1_PROFILE.targets
 
 
 class BundleError(ValueError):

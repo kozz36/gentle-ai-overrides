@@ -6,7 +6,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from composer.bundle import BundleError, compose_bundle, decode_json
+from composer.bundle import BundleError, SCHEMA, TARGETS, compose_bundle, decode_json
+from composer.profiles import V1_PROFILE
 from composer.agents import ROLES, MCP_ROLES, RULE_VERSION as AGENT_RULE
 from composer.overlay import RULE_VERSION as INIT_RULE
 from composer.storage import Root
@@ -69,6 +70,11 @@ class BundleTests(unittest.TestCase):
         with Root(self.path) as root:
             return compose_bundle(root, pin)
 
+    def test_v1_public_aliases_match_the_historical_profile(self):
+        self.assertEqual(SCHEMA, "deterministic-assets/v1")
+        self.assertEqual(TARGETS, V1_PROFILE.targets)
+        self.assertEqual(len(TARGETS), 14)
+
     def test_full_bundle_is_repeatable_without_writing_inputs(self):
         first = self.compose()
         self.assertEqual(first, self.compose())
@@ -93,6 +99,11 @@ class BundleTests(unittest.TestCase):
                 self.compose()
             self.manifest = original
         self.assertEqual(len(self.compose()[1]), 14)
+
+    def test_v2_profile_is_not_a_composition_contract_yet(self):
+        self.manifest["schema"] = "deterministic-assets/v2"
+        with self.assertRaises(BundleError):
+            self.compose()
 
     def test_inventory_changes_are_not_silently_accepted(self):
         original = copy.deepcopy(self.manifest)
