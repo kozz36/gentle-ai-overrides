@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 from composer.bundle import TARGETS
+from composer.profiles import ComposerProfile, V1_SCHEMA, V2_PROFILE, V2_SCHEMA
 from composer.package_claims import (
     CURRENT_CLAIM,
     DESIRED_HASH_REATTACHMENT,
@@ -52,12 +53,32 @@ class PackageClaimTests(unittest.TestCase):
         with Root(self.home) as root:
             return observe_package_claims(root, **values)
 
+    def profile_values(self, profile):
+        return {
+            "declared_ownership": dict.fromkeys(profile.targets, "unknown"),
+            "current_sha256": {target: self.digest(target) for target in profile.targets},
+            "desired_sha256": {
+                target: self.digest(target + " desired") for target in profile.targets
+            },
+        }
+
+    def observe_profile(self, profile, **changes):
+        values = self.profile_values(profile)
+        values.update(changes)
+        return self.observe(profile=profile, **values)
+
     def test_optional_annotations_remain_postponed_strings(self):
         self.assertEqual(PackageClaim.__annotations__["current_sha256"], "str | None")
+        self.assertEqual(PackageClaim.__annotations__["desired_sha256"], "str | None")
         self.assertEqual(PackageClaimConflict.__annotations__["manifest_sha256"], "str | None")
+        self.assertEqual(PackageClaimConflict.__annotations__["desired_sha256"], "str | None")
         self.assertEqual(PackageClaimObservation.__annotations__["manifest_sha256"], "str | None")
         self.assertEqual(observe_package_claims.__annotations__["current_sha256"],
                          "Mapping[str, str | None]")
+        self.assertEqual(observe_package_claims.__annotations__["desired_sha256"],
+                         "Mapping[str, str | None]")
+        self.assertEqual(PackageClaimObservation(PACKAGE_VERSION, 1, None, (), ()).profile_schema,
+                         V1_SCHEMA)
 
     def test_missing_manifest_never_grants_ownership(self):
         result = self.observe()
@@ -172,30 +193,87 @@ class PackageClaimTests(unittest.TestCase):
 
         evidence = serialize_package_claim_evidence(observation)
 
-        self.assertEqual(list(evidence), [
-            "packageVersion", "manifestSchemaVersion", "manifestSha256", "claims", "conflicts",
-        ])
-        self.assertEqual(evidence["packageVersion"], PACKAGE_VERSION)
-        self.assertEqual(evidence["manifestSchemaVersion"], 1)
-        self.assertEqual(evidence["manifestSha256"], observation.manifest_sha256)
-        self.assertEqual(len(evidence["claims"]), 14)
-        self.assertEqual([claim["target"] for claim in evidence["claims"]], list(TARGETS))
-        self.assertEqual(evidence["claims"][0], {
-            "target": target,
+        expected_claims = [{
+            "target": item,
             "declaredOwnership": "unknown",
-            "currentSha256": self.current[target],
-            "desiredSha256": self.desired[target],
-            "manifestSha256": self.current[target],
+            "currentSha256": self.current[item],
+            "desiredSha256": self.desired[item],
+            "manifestSha256": self.current[item] if item == target else None,
+        } for item in TARGETS]
+        self.assertEqual(evidence, {
+            "packageVersion": PACKAGE_VERSION,
+            "manifestSchemaVersion": 1,
+            "manifestSha256": observation.manifest_sha256,
+            "claims": expected_claims,
+            "conflicts": [{
+                "target": target,
+                "reason": CURRENT_CLAIM,
+                "declaredOwnership": "unknown",
+                "currentSha256": self.current[target],
+                "desiredSha256": self.desired[target],
+                "manifestSha256": self.current[target],
+            }],
         })
-        self.assertEqual(evidence["conflicts"], [{
-            "target": target,
-            "reason": CURRENT_CLAIM,
-            "declaredOwnership": "unknown",
-            "currentSha256": self.current[target],
-            "desiredSha256": self.desired[target],
-            "manifestSha256": self.current[target],
-        }])
         json.dumps(evidence, sort_keys=True, allow_nan=False)
+
+    def test_v2_optional_desired_absence_is_serialized_with_its_profile(self):
+        optional = V2_PROFILE.optional_targets[0]
+        values = self.profile_values(V2_PROFILE)
+        values["desired_sha256"][optional] = None
+        values["current_sha256"][V2_PROFILE.required_targets[0]] = None
+        observation = self.observe(profile=V2_PROFILE, **values)
+
+        evidence = serialize_package_claim_evidence(observation)
+
+        self.assertEqual(observation.profile_schema, V2_SCHEMA)
+        self.assertEqual(len(observation.claims), 18)
+        self.assertEqual(tuple(claim.target for claim in observation.claims), V2_PROFILE.targets)
+        self.assertEqual(evidence["profileSchema"], V2_SCHEMA)
+        self.assertNotIn("profileSchema", serialize_package_claim_evidence(self.observe()))
+        optional_claim = next(claim for claim in evidence["claims"] if claim["target"] == optional)
+        self.assertIsNone(optional_claim["desiredSha256"])
+
+    def test_manifest_claim_for_absent_optional_desired_hash_is_stale(self):
+        optional = V2_PROFILE.optional_targets[0]
+        values = self.profile_values(V2_PROFILE)
+        values["desired_sha256"][optional] = None
+        self.write_manifest({optional: values["current_sha256"][optional]})
+
+        observation = self.observe(profile=V2_PROFILE, **values)
+
+        self.assertEqual([conflict.reason for conflict in observation.conflicts], [STALE_CLAIM])
+        self.assertEqual(observation.conflicts[0].target, optional)
+
+    def test_selected_profile_rejects_missing_extra_and_cross_profile_mappings(self):
+        v2 = self.profile_values(V2_PROFILE)
+        missing = dict(v2["desired_sha256"])
+        missing.pop(V2_PROFILE.optional_targets[0])
+        extra = dict(v2["current_sha256"], **{"assets/unknown.md": self.digest("unknown")})
+        cases = (
+            (V2_PROFILE, {**v2, "desired_sha256": missing}),
+            (V2_PROFILE, {**v2, "current_sha256": extra}),
+            (V1_SCHEMA, v2),
+        )
+        for profile, values in cases:
+            with self.subTest(profile=profile):
+                with self.assertRaises(PackageClaimError):
+                    if profile == V1_SCHEMA:
+                        self.observe(**values)
+                    else:
+                        self.observe(profile=profile, **values)
+
+    def test_observation_rejects_forged_profiles_before_manifest_read(self):
+        forged = object.__new__(ComposerProfile)
+        object.__setattr__(forged, "schema", V2_SCHEMA)
+        object.__setattr__(forged, "required_targets", V2_PROFILE.required_targets)
+        object.__setattr__(forged, "optional_targets", ())
+        with Root(self.home) as root, mock.patch.object(root, "read") as read:
+            for profile in (object(), forged):
+                with self.subTest(profile=profile), self.assertRaises(PackageClaimError):
+                    observe_package_claims(root, declared_ownership=self.ownership,
+                                           current_sha256=self.current,
+                                           desired_sha256=self.desired, profile=profile)
+            read.assert_not_called()
 
     def test_serializer_preserves_missing_empty_and_absent_current_evidence(self):
         target = TARGETS[0]
@@ -261,6 +339,7 @@ class PackageClaimTests(unittest.TestCase):
             replace(observation, claims=tuple(reversed(observation.claims))),
             replace(observation, claims=(replace(first_claim, desired_sha256=None),) + observation.claims[1:]),
             replace(observation, manifest_sha256=None),
+            replace(observation, profile_schema=V2_SCHEMA),
             replace(observation, conflicts=(replace(first_conflict, current_sha256=1),)),
         )
 

@@ -10,8 +10,9 @@ from dataclasses import dataclass
 import hashlib
 import re
 
-from .bundle import BundleError, TARGETS, _pin, decode_json, require_keys
+from .bundle import BundleError, _pin, decode_json, require_keys
 from .planner import OWNERS
+from .profiles import ComposerProfile, ProfileError, V1_PROFILE, V1_SCHEMA, profile_for_schema
 from .storage import PathError, Root, _parts
 
 MANIFEST_PATH = "gentle-ai/managed-assets.json"
@@ -42,7 +43,7 @@ class PackageClaim:
     target: str
     declared_ownership: str
     current_sha256: str | None
-    desired_sha256: str
+    desired_sha256: str | None
     manifest_sha256: str | None
 
 
@@ -54,7 +55,7 @@ class PackageClaimConflict:
     reason: str
     declared_ownership: str
     current_sha256: str | None
-    desired_sha256: str
+    desired_sha256: str | None
     manifest_sha256: str | None
 
 
@@ -67,30 +68,52 @@ class PackageClaimObservation:
     manifest_sha256: str | None
     claims: tuple[PackageClaim, ...]
     conflicts: tuple[PackageClaimConflict, ...]
+    profile_schema: str = V1_SCHEMA
 
 
-def _mapping(value, name):
+def _profile(profile):
+    if type(profile) is not ComposerProfile:
+        raise PackageClaimError("require a supported ComposerProfile")
+    try:
+        supported = profile_for_schema(profile.schema)
+    except ProfileError as exc:
+        raise PackageClaimError("unsupported composer profile") from exc
+    if profile != supported:
+        raise PackageClaimError("profile inventory differs from its supported schema")
+    return supported
+
+
+def _profile_schema(schema):
+    if type(schema) is not str:
+        raise PackageClaimError("unsupported composer profile")
+    try:
+        return profile_for_schema(schema)
+    except ProfileError as exc:
+        raise PackageClaimError("unsupported composer profile") from exc
+
+
+def _mapping(value, name, profile):
     if not isinstance(value, Mapping):
         raise PackageClaimError(f"require an explicit {name} mapping")
     result = dict(value)
     try:
-        require_keys(result, TARGETS)
+        require_keys(result, profile.targets)
     except BundleError as exc:
-        raise PackageClaimError(f"require exactly the supported {name} targets") from exc
+        raise PackageClaimError(f"require exactly the selected {name} targets") from exc
     return result
 
 
-def _ownership(value):
-    result = _mapping(value, "ownership")
+def _ownership(value, profile):
+    result = _mapping(value, "ownership", profile)
     if any(not isinstance(owner, str) or owner not in OWNERS for owner in result.values()):
         raise PackageClaimError("unsupported declared ownership")
     return result
 
 
-def _hashes(value, name, *, allow_absent):
-    result = _mapping(value, name)
+def _hashes(value, name, profile, *, allow_absent):
+    result = _mapping(value, name, profile)
     for target, digest in result.items():
-        if allow_absent and digest is None:
+        if digest is None and (allow_absent or target in profile.optional_targets):
             continue
         try:
             _pin(digest)
@@ -138,7 +161,9 @@ def _canonical_conflicts(claims):
     conflicts = []
     for claim in claims:
         if claim.manifest_sha256 is not None:
-            if claim.manifest_sha256 == claim.current_sha256:
+            if claim.desired_sha256 is None:
+                reason = STALE_CLAIM
+            elif claim.manifest_sha256 == claim.current_sha256:
                 reason = CURRENT_CLAIM
             elif claim.manifest_sha256 == claim.desired_sha256:
                 reason = DESIRED_HASH_REATTACHMENT
@@ -148,6 +173,7 @@ def _canonical_conflicts(claims):
                                        claim.current_sha256, claim.desired_sha256,
                                        claim.manifest_sha256))
         current_claim = (claim.manifest_sha256 is not None and
+                         claim.desired_sha256 is not None and
                          claim.manifest_sha256 == claim.current_sha256)
         if ((claim.declared_ownership == "managed" and not current_claim) or
                 (claim.declared_ownership == "user-owned" and claim.manifest_sha256 is not None)):
@@ -168,7 +194,7 @@ def _sha256(value, name, *, allow_none):
         raise PackageClaimError(f"{name}: require a lowercase SHA-256") from exc
 
 
-def _validate_claim(claim):
+def _validate_claim(claim, profile):
     if type(claim) is not PackageClaim:
         raise PackageClaimError("require PackageClaim entries")
     if type(claim.target) is not str:
@@ -176,11 +202,12 @@ def _validate_claim(claim):
     if type(claim.declared_ownership) is not str or claim.declared_ownership not in OWNERS:
         raise PackageClaimError("unsupported claim ownership")
     _sha256(claim.current_sha256, "claim current hash", allow_none=True)
-    _sha256(claim.desired_sha256, "claim desired hash", allow_none=False)
+    _sha256(claim.desired_sha256, "claim desired hash",
+            allow_none=claim.target in profile.optional_targets)
     _sha256(claim.manifest_sha256, "claim manifest hash", allow_none=True)
 
 
-def _validate_conflict(conflict):
+def _validate_conflict(conflict, profile):
     if type(conflict) is not PackageClaimConflict:
         raise PackageClaimError("require PackageClaimConflict entries")
     if type(conflict.target) is not str or type(conflict.reason) is not str:
@@ -190,7 +217,8 @@ def _validate_conflict(conflict):
     if type(conflict.declared_ownership) is not str or conflict.declared_ownership not in OWNERS:
         raise PackageClaimError("unsupported conflict ownership")
     _sha256(conflict.current_sha256, "conflict current hash", allow_none=True)
-    _sha256(conflict.desired_sha256, "conflict desired hash", allow_none=False)
+    _sha256(conflict.desired_sha256, "conflict desired hash",
+            allow_none=conflict.target in profile.optional_targets)
     _sha256(conflict.manifest_sha256, "conflict manifest hash", allow_none=True)
 
 
@@ -203,19 +231,20 @@ def _validate_observation(observation):
             observation.manifest_schema_version != MANIFEST_SCHEMA_VERSION):
         raise PackageClaimError("unsupported managed-assets manifest schema")
     _sha256(observation.manifest_sha256, "manifest hash", allow_none=True)
+    profile = _profile_schema(observation.profile_schema)
     if type(observation.claims) is not tuple:
         raise PackageClaimError("require immutable claim tuple")
     for claim in observation.claims:
-        _validate_claim(claim)
-    if tuple(claim.target for claim in observation.claims) != TARGETS:
-        raise PackageClaimError("require exactly the supported claims in canonical order")
+        _validate_claim(claim, profile)
+    if tuple(claim.target for claim in observation.claims) != profile.targets:
+        raise PackageClaimError("require exactly the selected claims in canonical order")
     if observation.manifest_sha256 is None and any(claim.manifest_sha256 is not None
                                                    for claim in observation.claims):
         raise PackageClaimError("per-target manifest claims require a manifest hash")
     if type(observation.conflicts) is not tuple:
         raise PackageClaimError("require immutable conflict tuple")
     for conflict in observation.conflicts:
-        _validate_conflict(conflict)
+        _validate_conflict(conflict, profile)
     if observation.conflicts != _canonical_conflicts(observation.claims):
         raise PackageClaimError("supplied conflicts are not canonical")
 
@@ -227,7 +256,7 @@ def serialize_package_claim_evidence(observation: PackageClaimObservation) -> di
     authenticity, ownership authority, consent, or permission to modify anything.
     """
     _validate_observation(observation)
-    return {
+    evidence = {
         "packageVersion": observation.package_version,
         "manifestSchemaVersion": observation.manifest_schema_version,
         "manifestSha256": observation.manifest_sha256,
@@ -247,6 +276,9 @@ def serialize_package_claim_evidence(observation: PackageClaimObservation) -> di
             "manifestSha256": conflict.manifest_sha256,
         } for conflict in observation.conflicts],
     }
+    if observation.profile_schema != V1_SCHEMA:
+        evidence["profileSchema"] = observation.profile_schema
+    return evidence
 
 
 def observe_package_claims(
@@ -254,22 +286,25 @@ def observe_package_claims(
     *,
     declared_ownership: Mapping[str, str],
     current_sha256: Mapping[str, str | None],
-    desired_sha256: Mapping[str, str],
+    desired_sha256: Mapping[str, str | None],
+    profile: ComposerProfile = V1_PROFILE,
 ) -> PackageClaimObservation:
-    """Observe manifest claims against explicit fourteen-target evidence.
+    """Observe manifest claims against an explicit selected-profile inventory.
 
     ``current_sha256`` may use ``None`` only to represent a target known absent.
-    The observer validates every manifest entry but reads no managed asset file.
+    ``desired_sha256`` may use ``None`` only for selected optional targets. The
+    observer validates every manifest entry but reads no managed asset file.
     """
     if not isinstance(agent_home, Root):
         raise PackageClaimError("require an explicit Root agent home")
-    ownership = _ownership(declared_ownership)
-    current = _hashes(current_sha256, "current hashes", allow_absent=True)
-    desired = _hashes(desired_sha256, "desired hashes", allow_absent=False)
+    profile = _profile(profile)
+    ownership = _ownership(declared_ownership, profile)
+    current = _hashes(current_sha256, "current hashes", profile, allow_absent=True)
+    desired = _hashes(desired_sha256, "desired hashes", profile, allow_absent=False)
     manifest_sha256, assets = _manifest(agent_home)
     claims = tuple(
         PackageClaim(target, ownership[target], current[target], desired[target], assets.get(target))
-        for target in TARGETS
+        for target in profile.targets
     )
     return PackageClaimObservation(
         package_version=PACKAGE_VERSION,
@@ -277,4 +312,5 @@ def observe_package_claims(
         manifest_sha256=manifest_sha256,
         claims=claims,
         conflicts=_canonical_conflicts(claims),
+        profile_schema=profile.schema,
     )
