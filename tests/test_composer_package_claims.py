@@ -15,6 +15,7 @@ from composer.package_claims import (
     OWNERSHIP_CONTRADICTION,
     PACKAGE_VERSION,
     STALE_CLAIM,
+    V2_PACKAGE_VERSION,
     PackageClaim,
     PackageClaimConflict,
     PackageClaimError,
@@ -226,6 +227,7 @@ class PackageClaimTests(unittest.TestCase):
         evidence = serialize_package_claim_evidence(observation)
 
         self.assertEqual(observation.profile_schema, V2_SCHEMA)
+        self.assertEqual(observation.package_version, V2_PACKAGE_VERSION)
         self.assertEqual(len(observation.claims), 18)
         self.assertEqual(tuple(claim.target for claim in observation.claims), V2_PROFILE.targets)
         self.assertEqual(evidence["profileSchema"], V2_SCHEMA)
@@ -347,6 +349,15 @@ class PackageClaimTests(unittest.TestCase):
             with self.subTest(observation=supplied):
                 with self.assertRaises(PackageClaimError):
                     serialize_package_claim_evidence(supplied)
+
+    def test_serializer_rejects_cross_profile_package_versions(self):
+        observations = (
+            replace(self.observe(), package_version=V2_PACKAGE_VERSION),
+            replace(self.observe_profile(V2_PROFILE), package_version=PACKAGE_VERSION),
+        )
+        for observation in observations:
+            with self.subTest(profile=observation.profile_schema), self.assertRaises(PackageClaimError):
+                serialize_package_claim_evidence(observation)
 
     def test_observation_evidence_is_immutable(self):
         target = TARGETS[0]

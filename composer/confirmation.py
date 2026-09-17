@@ -5,8 +5,8 @@ import json
 import re
 
 from .agents import _header, _text
-from .bundle import (AGENT_RULE, INIT_RULE, SCHEMA, TARGETS, V2_BLOCKS, V2_RULES,
-                     _pin, require_keys)
+from .bundle import (AGENT_RULE, INIT_RULE, SCHEMA, TARGETS, V2_BLOCKS,
+                     V2_PROVENANCE_VERSIONS, V2_RULES, _pin, require_keys)
 from .package_claims import serialize_package_claim_evidence
 from .planner import PLAN_VERSION, _validate, plan_asset
 from .preparation import PackageClaimPreparation
@@ -35,6 +35,8 @@ def _profile_for_provenance(provenance):
     if any(not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]*", value)
            for value in provenance["versions"].values()):
         raise ConfirmationError("require explicit version identifiers")
+    if profile is not V1_PROFILE and provenance["versions"] != V2_PROVENANCE_VERSIONS:
+        raise ConfirmationError("require exact v2 release provenance versions")
     revision = provenance["overlay_revision"]
     if not isinstance(revision, str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", revision):
         raise ConfirmationError("require a full overlay revision identifier")

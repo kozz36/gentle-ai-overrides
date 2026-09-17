@@ -7,6 +7,7 @@ No installed files, native ownership, output directories, or HOME are accessed.
 import hashlib
 import json
 import re
+from types import MappingProxyType
 
 from .agents import AgentError, RULE_VERSION as AGENT_RULE, compose_agent
 from .neutral_policy import (GENTLE_INIT_RULE_VERSION,
@@ -70,6 +71,11 @@ V2_RULES = {
 V2_BLOCKS = ("init", "codegraph", "mcp", "gentle_init", "legacy_sdd_init",
              "workflow_current", "workflow_predecessor", "delegation_current",
              "delegation_predecessor")
+V2_PROVENANCE_VERSIONS = MappingProxyType({
+    "gentle_ai": "3.1.0",
+    "gentle_pi": "3.2.0",
+    "overlay": "3.2.0-overlay.1",
+})
 
 
 def compose_bundle(root, manifest_sha256):
@@ -84,6 +90,8 @@ def compose_bundle(root, manifest_sha256):
     if any(not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]*", value)
            for value in manifest["versions"].values()):
         raise BundleError("require explicit version identifiers")
+    if profile is not V1_PROFILE and manifest["versions"] != V2_PROVENANCE_VERSIONS:
+        raise BundleError("require exact v2 release provenance versions")
     revision = manifest["overlay_revision"]
     if not isinstance(revision, str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", revision):
         raise BundleError("require a full overlay revision identifier")

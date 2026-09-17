@@ -6,7 +6,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from composer.bundle import BundleError, SCHEMA, TARGETS, compose_bundle, decode_json
+from composer.bundle import (BundleError, SCHEMA, TARGETS, V2_PROVENANCE_VERSIONS,
+                             compose_bundle, decode_json)
 from composer.profiles import V1_PROFILE, V2_PROFILE
 from composer.neutral_policy import (GENTLE_INIT_RULE_VERSION,
                                     LEGACY_SDD_INIT_RETIRE_RULE_VERSION)
@@ -133,6 +134,7 @@ def v2_rules():
 def v2_fixture(base, delegation=True):
     root, manifest = fixture(base)
     manifest["schema"] = V2_PROFILE.schema
+    manifest["versions"] = dict(V2_PROVENANCE_VERSIONS)
     manifest["rules"] = v2_rules()
     for name, data in PACKAGE_BLOCKS.items():
         (root / "blocks" / (name + ".md")).write_bytes(data)
@@ -262,6 +264,7 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(tuple(candidates), V2_PROFILE.targets)
         self.assertEqual(len(candidates), 18)
         self.assertEqual(metadata["schema"], V2_PROFILE.schema)
+        self.assertEqual(metadata["versions"], dict(V2_PROVENANCE_VERSIONS))
         self.assertEqual(metadata["rules"], v2_rules())
         self.assertEqual(metadata["optional_absent"], [])
         for target, content in expected.items():
@@ -288,6 +291,22 @@ class BundleTests(unittest.TestCase):
             manifest["assets"][target]["source_sha256"] = digest(source)
             _, candidates = compose_manifest(root, manifest)
         self.assertEqual(candidates[target]["content"], source)
+
+    def test_v2_requires_exact_release_provenance_versions(self):
+        with tempfile.TemporaryDirectory() as base:
+            root, manifest, _ = v2_fixture(Path(base))
+            original = copy.deepcopy(manifest)
+            changes = {
+                "missing": lambda versions: versions.pop("overlay"),
+                "extra": lambda versions: versions.update(extra="3.2.0"),
+                "wrong": lambda versions: versions.update(gentle_ai="3.1.1"),
+                "cross-profile": lambda versions: versions.update(gentle_pi="3.1.0"),
+            }
+            for name, change in changes.items():
+                manifest = copy.deepcopy(original)
+                change(manifest["versions"])
+                with self.subTest(name=name), self.assertRaises(BundleError):
+                    compose_manifest(root, manifest)
 
     def test_v2_rejects_unrecognized_profiles_and_inventory_declarations(self):
         with tempfile.TemporaryDirectory() as base:

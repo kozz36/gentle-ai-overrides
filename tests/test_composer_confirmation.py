@@ -10,9 +10,9 @@ import unittest
 from unittest import mock
 
 from composer.__main__ import compose
-from composer.bundle import TARGETS, compose_bundle
+from composer.bundle import TARGETS, V2_PROVENANCE_VERSIONS, compose_bundle
 from composer.confirmation import ConfirmationError, prepare_confirmation
-from composer.package_claims import (MANIFEST_SCHEMA_VERSION, PACKAGE_VERSION, PackageClaim,
+from composer.package_claims import (MANIFEST_SCHEMA_VERSION, V2_PACKAGE_VERSION, PackageClaim,
                                      PackageClaimObservation, observe_package_claims,
                                      serialize_package_claim_evidence)
 from composer.preparation import PackageClaimPreparation, prepare_package_claim_evidence
@@ -494,7 +494,7 @@ class V2ConfirmationTests(unittest.TestCase):
                 self.candidates.get(target, {}).get("sha256"), None,
             ) for target in V2_PROFILE.targets)
             observation = PackageClaimObservation(
-                PACKAGE_VERSION, MANIFEST_SCHEMA_VERSION, None, claims, (), V2_PROFILE.schema)
+                V2_PACKAGE_VERSION, MANIFEST_SCHEMA_VERSION, None, claims, (), V2_PROFILE.schema)
         return PackageClaimPreparation(
             CapturedSnapshot(payload, hashlib.sha256(payload).hexdigest()), observation)
 
@@ -529,6 +529,8 @@ class V2ConfirmationTests(unittest.TestCase):
     def test_literal_v2_absence_binds_full_evidence_without_a_row_or_desired_entry(self):
         payload = json.loads(prepare_confirmation(**self.args).payload)
         self.assertEqual(payload["plan"]["provenance"]["optional_absent"], [self.optional])
+        self.assertEqual(payload["plan"]["provenance"]["versions"], dict(V2_PROVENANCE_VERSIONS))
+        self.assertEqual(payload["plan"]["package_claims"]["packageVersion"], V2_PACKAGE_VERSION)
         self.assertEqual(payload["plan"]["package_claims"]["profileSchema"], V2_PROFILE.schema)
         self.assertEqual(list(payload["installed_entries"]), list(V2_PROFILE.targets))
         self.assertEqual(list(payload["baseline_entries"]), list(V2_PROFILE.targets))
@@ -561,6 +563,20 @@ class V2ConfirmationTests(unittest.TestCase):
                          list(V2_PROFILE.targets))
         self.assertEqual(payload["desired_entries"][self.optional]["sha256"],
                          self.optional_candidate["sha256"])
+
+    def test_v2_requires_exact_release_provenance_versions(self):
+        mutations = {
+            "missing": lambda versions: versions.pop("overlay"),
+            "extra": lambda versions: versions.update(extra="3.2.0"),
+            "wrong": lambda versions: versions.update(gentle_ai="3.1.1"),
+            "cross-profile": lambda versions: versions.update(gentle_pi="3.1.0"),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                args = copy.deepcopy(self.args)
+                mutate(args["provenance"]["versions"])
+                with self.assertRaises(ConfirmationError):
+                    prepare_confirmation(**args)
 
     def test_v2_cross_profile_provenance_snapshot_claim_candidate_and_row_fail_closed(self):
         def wrong_provenance(args):

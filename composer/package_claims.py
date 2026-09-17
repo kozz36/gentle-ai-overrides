@@ -12,18 +12,24 @@ import re
 
 from .bundle import BundleError, _pin, decode_json, require_keys
 from .planner import OWNERS
-from .profiles import ComposerProfile, ProfileError, V1_PROFILE, V1_SCHEMA, profile_for_schema
+from .profiles import (ComposerProfile, ProfileError, V1_PROFILE, V1_SCHEMA, V2_SCHEMA,
+                       profile_for_schema)
 from .storage import PathError, Root, _parts
 
 MANIFEST_PATH = "gentle-ai/managed-assets.json"
 MANIFEST_SCHEMA_VERSION = 1
 PACKAGE_VERSION = "2.7.0"
+V2_PACKAGE_VERSION = "3.2.0"
 
 CURRENT_CLAIM = "current_claim"
 DESIRED_HASH_REATTACHMENT = "desired_hash_reattachment"
 STALE_CLAIM = "stale_claim"
 OWNERSHIP_CONTRADICTION = "ownership_contradiction"
-SUPPORTED_PACKAGE_VERSIONS = frozenset({PACKAGE_VERSION})
+SUPPORTED_PACKAGE_VERSIONS = frozenset({PACKAGE_VERSION, V2_PACKAGE_VERSION})
+_PACKAGE_VERSION_BY_PROFILE_SCHEMA = {
+    V1_SCHEMA: PACKAGE_VERSION,
+    V2_SCHEMA: V2_PACKAGE_VERSION,
+}
 _CONFLICT_REASONS = frozenset({
     CURRENT_CLAIM,
     DESIRED_HASH_REATTACHMENT,
@@ -232,6 +238,8 @@ def _validate_observation(observation):
         raise PackageClaimError("unsupported managed-assets manifest schema")
     _sha256(observation.manifest_sha256, "manifest hash", allow_none=True)
     profile = _profile_schema(observation.profile_schema)
+    if observation.package_version != _PACKAGE_VERSION_BY_PROFILE_SCHEMA[profile.schema]:
+        raise PackageClaimError("package version differs from selected composer profile")
     if type(observation.claims) is not tuple:
         raise PackageClaimError("require immutable claim tuple")
     for claim in observation.claims:
@@ -307,7 +315,7 @@ def observe_package_claims(
         for target in profile.targets
     )
     return PackageClaimObservation(
-        package_version=PACKAGE_VERSION,
+        package_version=_PACKAGE_VERSION_BY_PROFILE_SCHEMA[profile.schema],
         manifest_schema_version=MANIFEST_SCHEMA_VERSION,
         manifest_sha256=manifest_sha256,
         claims=claims,
