@@ -11,22 +11,30 @@ import json
 import sys
 
 from .agents import _header, _text
-from .bundle import BundleError, TARGETS, compose_bundle, decode_json, require_keys
+from .bundle import BundleError, compose_bundle, decode_json, require_keys
 from .package_claims import serialize_package_claim_evidence
+from .profiles import ProfileError, V1_PROFILE, profile_for_schema
 from .planner import PLAN_VERSION, _validate, plan_asset
 from .preparation import prepare_package_claim_evidence
 from .storage import MAX_BYTES, Root
 
 
-def _snapshot(root):
+def _snapshot(root, profile=V1_PROFILE):
     raw = root.read("state.json")
     state = decode_json(raw)
-    require_keys(state, {"schema", "entries"})
-    if state["schema"] != "asset-snapshot/v1":
-        raise BundleError("unsupported snapshot schema")
-    require_keys(state["entries"], TARGETS)
+    if profile is V1_PROFILE:
+        require_keys(state, {"schema", "entries"})
+        if state["schema"] != "asset-snapshot/v1":
+            raise BundleError("unsupported snapshot schema")
+    else:
+        require_keys(state, {"schema", "profileSchema", "entries"})
+        if (state["schema"] != "asset-snapshot/v2"
+                or state["profileSchema"] != profile.schema):
+            raise BundleError("unsupported snapshot schema")
+    require_keys(state["entries"], profile.targets)
     contents = {}
-    for target, observation in state["entries"].items():
+    for target in profile.targets:
+        observation = state["entries"][target]
         if observation is None:
             try:
                 root.read(target)
@@ -43,26 +51,50 @@ def _snapshot(root):
     return state["entries"], contents, hashlib.sha256(raw).hexdigest()
 
 
-def compose(args):
+def _compose(args):
     with ExitStack() as stack:
         roots = [stack.enter_context(Root(args.input)), stack.enter_context(Root(args.installed)),
                  stack.enter_context(Root(args.claims_home))]
         metadata, candidates = compose_bundle(roots[0], args.manifest_sha256)
-        installed, contents, installed_pin = _snapshot(roots[1])
-        baseline, baseline_pin = dict.fromkeys(TARGETS), None
+        try:
+            profile = profile_for_schema(metadata.get("schema"))
+        except ProfileError as exc:
+            raise BundleError("unsupported bundle profile metadata") from exc
+        provenance_keys = {"schema", "versions", "overlay_revision", "rules", "manifest_sha256",
+                           "block_sha256"}
+        if profile is not V1_PROFILE:
+            provenance_keys.add("optional_absent")
+        require_keys(metadata, provenance_keys)
+        optional_absent = [] if profile is V1_PROFILE else metadata["optional_absent"]
+        present = tuple(target for target in profile.targets if target not in optional_absent)
+        if (type(optional_absent) is not list
+                or optional_absent != [target for target in profile.optional_targets
+                                       if target not in candidates]):
+            raise BundleError("optional absence differs from selected candidate inventory")
+        require_keys(candidates, present)
+        for target in present:
+            candidate = candidates[target]
+            require_keys(candidate, {"content", "sha256", "source_sha256", "tools"})
+            if (not isinstance(candidate["content"], bytes)
+                    or hashlib.sha256(candidate["content"]).hexdigest() != candidate["sha256"]):
+                raise BundleError("candidate desired hash does not match bytes")
+        installed, contents, installed_pin = _snapshot(roots[1], profile)
+        baseline, baseline_pin = dict.fromkeys(profile.targets), None
         if args.baseline is not None:
             roots.append(stack.enter_context(Root(args.baseline)))
-            baseline, _, baseline_pin = _snapshot(roots[-1])
+            baseline, _, baseline_pin = _snapshot(roots[-1], profile)
         ownership = {target: entry["ownership"] if entry is not None else "unknown"
                      for target, entry in installed.items()}
+        desired_sha256 = {target: (candidates[target]["sha256"] if target in candidates else None)
+                          for target in profile.targets}
         preparation = prepare_package_claim_evidence(
-            roots[2], declared_ownership=ownership,
-            desired_sha256={target: candidate["sha256"] for target, candidate in candidates.items()})
+            roots[2], declared_ownership=ownership, desired_sha256=desired_sha256, profile=profile)
         if preparation.snapshot.entries != installed:
             raise BundleError("package-claim snapshot disagrees with installed snapshot; no files written")
         package_claims = serialize_package_claim_evidence(preparation.observation)
         rows = []
-        for target, candidate in candidates.items():
+        for target in present:
+            candidate = candidates[target]
             desired = {key: candidate[key] for key in ("sha256", "tools")}
             row = plan_asset(target, baseline[target], installed[target], desired)
             row["source_sha256"] = candidate["source_sha256"]
@@ -81,13 +113,19 @@ def compose(args):
         if len(encoded) > MAX_BYTES:
             raise BundleError("plan exceeds the output byte limit; no files written")
         with Root.create_output(args.output, protected=roots) as output:
-            for target, candidate in candidates.items():
+            for target in present:
+                candidate = candidates[target]
                 output.write(target, candidate["content"])
                 output.read(target, candidate["sha256"])
             # Presence of this file is not approval; process success/readback still matters.
             output.write("plan.json", encoded)
             output.read("plan.json", hashlib.sha256(encoded).hexdigest())
-        return plan["blocked"]
+        return plan["blocked"], len(present)
+
+
+def compose(args):
+    """Compose candidates while retaining the historical boolean API."""
+    return _compose(args)[0]
 
 
 def main(argv=None):
@@ -97,11 +135,11 @@ def main(argv=None):
     parser.add_argument("--baseline", help="Optional previously verified snapshot root; never bootstrapped here")
     args = parser.parse_args(argv)
     try:
-        blocked = compose(args)
+        blocked, assets = _compose(args)
     except (ValueError, OSError) as exc:
         print(f"composer: {exc}", file=sys.stderr)
         return 3
-    print(json.dumps({"output": args.output, "assets": len(TARGETS), "blocked": blocked}))
+    print(json.dumps({"output": args.output, "assets": assets, "blocked": blocked}))
     return 2 if blocked else 0
 
 

@@ -7,22 +7,32 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
-from composer.bundle import compose_bundle
+from composer.bundle import BundleError, compose_bundle
+from composer.profiles import V1_PROFILE, V2_PROFILE
 from composer.storage import PathError, Root
-from test_composer_bundle import fixture, save_manifest
+from test_composer_bundle import fixture, save_manifest, v2_fixture
 
 
-def snapshot(path, candidates, ownership="user-owned"):
+def snapshot(path, candidates, ownership="user-owned", profile=V1_PROFILE):
     path.mkdir()
     entries = {}
-    for target, candidate in candidates.items():
+    for target in profile.targets:
+        candidate = candidates.get(target)
+        if candidate is None:
+            entries[target] = None
+            continue
         file = path / target
-        file.parent.mkdir(exist_ok=True)
+        file.parent.mkdir(parents=True, exist_ok=True)
         file.write_bytes(candidate["content"])
         entries[target] = {"sha256": candidate["sha256"], "tools": candidate["tools"], "ownership": ownership}
     # Deliberately noncanonical: its raw digest is distinct from capture evidence.
-    (path / "state.json").write_text(json.dumps({"schema": "asset-snapshot/v1", "entries": entries}, indent=2))
+    state = {"schema": "asset-snapshot/v1", "entries": entries}
+    if profile is not V1_PROFILE:
+        state = {"schema": "asset-snapshot/v2", "profileSchema": profile.schema, "entries": entries}
+    (path / "state.json").write_text(json.dumps(state, indent=2))
 
 
 class CliTests(unittest.TestCase):
@@ -41,12 +51,13 @@ class CliTests(unittest.TestCase):
         snapshot(self.baseline, self.candidates)
         snapshot(self.claims, self.candidates)
 
-    def run_cli(self, output, baseline=True, **flags):
+    def run_cli(self, output, baseline=True, inputs=None, **flags):
         options = {"input": str(self.bundle), "manifest-sha256": self.pin,
                    "installed": str(self.installed), "claims-home": str(self.claims),
-                   "output": str(output)}
+                   "output": str(output)} if inputs is None else dict(inputs)
+        options["output"] = str(output)
         if baseline:
-            options["baseline"] = str(self.baseline)
+            options.setdefault("baseline", str(self.baseline))
         options.update(flags)
         command = [sys.executable] + (["-O"] if sys.flags.optimize else []) + ["-m", "composer"]
         for key, value in options.items():
@@ -65,6 +76,93 @@ class CliTests(unittest.TestCase):
         self.assertTrue(all(row["action"] == "noop" for row in plan["rows"]))
         for target, candidate in self.candidates.items():
             self.assertEqual((output / target).read_bytes(), candidate["content"])
+
+    def v2_inputs(self, name, delegation):
+        base = self.base / name
+        base.mkdir()
+        bundle, manifest, _ = v2_fixture(base, delegation=delegation)
+        pin = save_manifest(bundle, manifest)
+        with Root(bundle) as root:
+            _, candidates = compose_bundle(root, pin)
+        installed, baseline, claims = (base / "installed", base / "baseline", base / "claims")
+        for root in (installed, baseline, claims):
+            snapshot(root, candidates, profile=V2_PROFILE)
+        return candidates, {"input": str(bundle), "manifest-sha256": pin,
+                            "installed": str(installed), "baseline": str(baseline),
+                            "claims-home": str(claims)}, (installed, baseline, claims)
+
+    def test_cli_v2_writes_complete_profile_evidence_and_present_candidates(self):
+        candidates, inputs, roots = self.v2_inputs("v2-present", delegation=True)
+        output = self.base / "v2-present-output"
+        result = self.run_cli(output, inputs=inputs)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        summary, plan = json.loads(result.stdout), json.loads((output / "plan.json").read_bytes())
+        self.assertEqual(summary["assets"], 18)
+        self.assertEqual(plan["schema"], "asset-change-plan/v1")
+        self.assertEqual(plan["provenance"]["schema"], V2_PROFILE.schema)
+        self.assertEqual(plan["provenance"]["optional_absent"], [])
+        self.assertEqual(tuple(row["target"] for row in plan["rows"]), V2_PROFILE.targets)
+        self.assertEqual(tuple(claim["target"] for claim in plan["package_claims"]["claims"]),
+                         V2_PROFILE.targets)
+        self.assertEqual(plan["package_claims"]["profileSchema"], V2_PROFILE.schema)
+        self.assertEqual(tuple(target for target in V2_PROFILE.targets if (output / target).is_file()),
+                         tuple(candidates))
+        for root in roots:
+            state = json.loads((root / "state.json").read_bytes())
+            self.assertEqual(set(state), {"schema", "profileSchema", "entries"})
+            self.assertEqual(state["profileSchema"], V2_PROFILE.schema)
+            self.assertEqual(tuple(state["entries"]), V2_PROFILE.targets)
+
+    def test_cli_v2_keeps_explicit_optional_absence_out_of_candidates_and_rows(self):
+        candidates, inputs, roots = self.v2_inputs("v2-absent", delegation=None)
+        output = self.base / "v2-absent-output"
+        result = self.run_cli(output, inputs=inputs)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        summary, plan = json.loads(result.stdout), json.loads((output / "plan.json").read_bytes())
+        absent = "assets/orchestrator-delegation.md"
+        expected = tuple(target for target in V2_PROFILE.targets if target != absent)
+        self.assertEqual(summary["assets"], 17)
+        self.assertEqual(plan["provenance"]["optional_absent"], [absent])
+        self.assertEqual(tuple(row["target"] for row in plan["rows"]), expected)
+        self.assertFalse((output / absent).exists())
+        self.assertEqual(tuple(candidates), expected)
+        self.assertEqual(tuple(target for target in V2_PROFILE.targets if (output / target).is_file()), expected)
+        claim = next(claim for claim in plan["package_claims"]["claims"] if claim["target"] == absent)
+        self.assertEqual((claim["declaredOwnership"], claim["currentSha256"], claim["desiredSha256"]),
+                         ("unknown", None, None))
+        self.assertTrue(all(json.loads((root / "state.json").read_bytes())["entries"][absent] is None
+                            for root in roots))
+
+    def test_cli_v2_rejects_cross_profile_or_extra_snapshot_metadata_before_output(self):
+        for name, mutate in {
+            "cross-profile": lambda state: state.update(schema="asset-snapshot/v1"),
+            "missing-profile-metadata": lambda state: state.pop("profileSchema"),
+            "extra-optional-metadata": lambda state: state.update(optional_absent=[]),
+        }.items():
+            with self.subTest(name=name):
+                _, inputs, roots = self.v2_inputs(name, delegation=None)
+                state_path = roots[0] / "state.json"
+                state = json.loads(state_path.read_bytes())
+                mutate(state)
+                state_path.write_text(json.dumps(state))
+                output = self.base / (name + "-output")
+                self.assertEqual(self.run_cli(output, inputs=inputs).returncode, 3)
+                self.assertFalse(output.exists())
+
+    def test_v2_desired_hash_mismatch_fails_before_creating_output(self):
+        from composer.__main__ import compose
+        candidates, inputs, _ = self.v2_inputs("v2-desired", delegation=True)
+        candidates["agents/sdd-apply.md"] = dict(candidates["agents/sdd-apply.md"], sha256="0" * 64)
+        args = SimpleNamespace(input=inputs["input"], manifest_sha256=inputs["manifest-sha256"],
+                               installed=inputs["installed"], claims_home=inputs["claims-home"],
+                               baseline=inputs["baseline"], output=str(self.base / "v2-desired-output"))
+        with mock.patch("composer.__main__.compose_bundle",
+                        return_value=({"schema": V2_PROFILE.schema, "versions": {},
+                                      "overlay_revision": "a" * 40, "rules": {},
+                                      "manifest_sha256": "a" * 64, "block_sha256": {},
+                                      "optional_absent": []}, candidates)), self.assertRaises(BundleError):
+            compose(args)
+        self.assertFalse((self.base / "v2-desired-output").exists())
 
     def test_claims_home_is_required(self):
         output = self.base / "output"
