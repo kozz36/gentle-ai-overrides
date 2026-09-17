@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 from composer.bundle import TARGETS
+from composer.profiles import ComposerProfile, V1_PROFILE, V2_PROFILE
 from composer.package_claims import (
     CURRENT_CLAIM,
     DESIRED_HASH_REATTACHMENT,
@@ -81,6 +82,102 @@ class PackageClaimPreparationTests(unittest.TestCase):
         self.assertTrue(all(path == str(self.home) for path, _ in reads))
         self.assertEqual(before, {target: (self.home / target).read_bytes() for target in TARGETS})
         self.assertFalse(self.manifest.exists())
+
+    def _profile_values(self, profile):
+        for target in profile.targets:
+            if target not in self.contents:
+                content = b"Synthetic package asset.\n"
+                path = self.home / target
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+                self.contents[target] = content
+        desired = {target: self.digest(("desired:" + target).encode())
+                   for target in profile.targets}
+        for target in profile.optional_targets:
+            desired[target] = None
+        return dict.fromkeys(profile.targets, "unknown"), desired
+
+    def test_v2_preparation_binds_snapshot_and_claims_to_the_same_profile(self):
+        ownership, desired = self._profile_values(V2_PROFILE)
+        optional = V2_PROFILE.optional_targets[0]
+        (self.home / optional).unlink()
+        result, reads = self.tracked_prepare(
+            declared_ownership=ownership, desired_sha256=desired, profile=V2_PROFILE,
+        )
+        claims = {claim.target: claim for claim in result.observation.claims}
+        self.assertEqual(result.snapshot.entries[optional], None)
+        self.assertEqual(result.observation.profile_schema, V2_PROFILE.schema)
+        self.assertEqual(json.loads(result.snapshot.payload)["profileSchema"], V2_PROFILE.schema)
+        self.assertEqual(tuple(claims), V2_PROFILE.targets)
+        for target in V2_PROFILE.targets:
+            entry = result.snapshot.entries[target]
+            self.assertEqual(claims[target].current_sha256,
+                             entry["sha256"] if entry is not None else None)
+            self.assertEqual(claims[target].desired_sha256, desired[target])
+        self.assertEqual([relative for _, relative in reads],
+                         list(V2_PROFILE.targets) + [MANIFEST_PATH])
+
+    def test_profile_mapping_rejections_happen_before_target_reads(self):
+        ownership, desired = self._profile_values(V2_PROFILE)
+        invalid = (
+            (V2_PROFILE, self.ownership, self.desired),
+            (V1_PROFILE, ownership, desired),
+            (V2_PROFILE, dict(ownership, **{"assets/unknown.md": "unknown"}), desired),
+        )
+        with Root(self.home) as root, mock.patch.object(root, "read") as read:
+            for profile, declared_ownership, desired_sha256 in invalid:
+                with self.subTest(profile=profile.schema), self.assertRaises(PackageClaimError):
+                    prepare_package_claim_evidence(
+                        root,
+                        declared_ownership=declared_ownership,
+                        desired_sha256=desired_sha256,
+                        profile=profile,
+                    )
+            read.assert_not_called()
+
+    def test_invalid_or_forged_profile_is_rejected_before_target_reads(self):
+        forged = object.__new__(ComposerProfile)
+        object.__setattr__(forged, "schema", V2_PROFILE.schema)
+        object.__setattr__(forged, "required_targets", V2_PROFILE.required_targets)
+        object.__setattr__(forged, "optional_targets", ())
+        with Root(self.home) as root, mock.patch.object(root, "read") as read:
+            for profile in (object(), forged):
+                with self.subTest(profile=type(profile).__name__), self.assertRaises(PackageClaimError):
+                    prepare_package_claim_evidence(
+                        root,
+                        declared_ownership=self.ownership,
+                        desired_sha256=self.desired,
+                        profile=profile,
+                    )
+            read.assert_not_called()
+
+    def test_v2_input_mappings_are_detached_before_the_first_read(self):
+        ownership, desired = self._profile_values(V2_PROFILE)
+        target = V2_PROFILE.required_targets[0]
+        original_desired = desired[target]
+        with Root(self.home) as root:
+            original_read = root.read
+            changed = False
+
+            def read(relative):
+                nonlocal changed
+                if not changed:
+                    ownership[target] = "managed"
+                    desired[target] = self.digest(b"changed desired")
+                    changed = True
+                return original_read(relative)
+
+            with mock.patch.object(root, "read", side_effect=read):
+                result = prepare_package_claim_evidence(
+                    root,
+                    declared_ownership=ownership,
+                    desired_sha256=desired,
+                    profile=V2_PROFILE,
+                )
+        claim = next(claim for claim in result.observation.claims if claim.target == target)
+        self.assertEqual(result.snapshot.entries[target]["ownership"], "unknown")
+        self.assertEqual(claim.declared_ownership, "unknown")
+        self.assertEqual(claim.desired_sha256, original_desired)
 
     def test_current_hashes_are_derived_from_snapshot_and_missing_is_none(self):
         target = TARGETS[0]

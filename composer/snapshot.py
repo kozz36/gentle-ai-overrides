@@ -5,13 +5,26 @@ import hashlib
 import json
 
 from .agents import _header, _text
-from .bundle import TARGETS, require_keys
+from .bundle import BundleError, require_keys
 from .planner import OWNERS
+from .profiles import ComposerProfile, ProfileError, V1_PROFILE, V1_SCHEMA, profile_for_schema
 from .storage import MAX_BYTES, Root
 
 
 class SnapshotError(ValueError):
     """Declarations or the serialized snapshot exceed the supported contract."""
+
+
+def _profile(profile):
+    if type(profile) is not ComposerProfile:
+        raise SnapshotError("require a supported ComposerProfile")
+    try:
+        supported = profile_for_schema(profile.schema)
+    except ProfileError as exc:
+        raise SnapshotError("unsupported composer profile") from exc
+    if profile != supported:
+        raise SnapshotError("profile inventory differs from its supported schema")
+    return supported
 
 
 @dataclass(frozen=True)
@@ -27,8 +40,13 @@ class CapturedSnapshot:
         return json.loads(self.payload)["entries"]
 
 
-def capture_snapshot(root: Root, *, declared_ownership: Mapping[str, str]) -> CapturedSnapshot:
-    """Read fourteen targets without writing or inferring ownership.
+def capture_snapshot(
+    root: Root,
+    *,
+    declared_ownership: Mapping[str, str],
+    profile: ComposerProfile = V1_PROFILE,
+) -> CapturedSnapshot:
+    """Read one selected profile's targets without writing or inferring ownership.
 
     Ownership is supplied metadata, not native discovery. Missing files stay
     absent. Other IO/parser failures propagate without returning partial evidence.
@@ -37,14 +55,18 @@ def capture_snapshot(root: Root, *, declared_ownership: Mapping[str, str]) -> Ca
     ownership/conflicts, bind the destination, and recheck all confirmed preimages.
     No baseline is approved and no installed write is authorized by this result.
     """
+    profile = _profile(profile)
     if not isinstance(declared_ownership, Mapping):
         raise SnapshotError("require an explicit ownership mapping")
     owners = dict(declared_ownership)
-    require_keys(owners, TARGETS)
+    try:
+        require_keys(owners, profile.targets)
+    except BundleError as exc:
+        raise SnapshotError("require exactly the selected ownership targets") from exc
     if any(not isinstance(owner, str) or owner not in OWNERS for owner in owners.values()):
         raise SnapshotError("unsupported declared ownership")
     entries = {}
-    for target in TARGETS:
+    for target in profile.targets:
         try:
             content = root.read(target)
         except FileNotFoundError:
@@ -53,8 +75,12 @@ def capture_snapshot(root: Root, *, declared_ownership: Mapping[str, str]) -> Ca
         tools = _header(_text(content))[2] if target.startswith("agents/") else None
         entries[target] = {"sha256": hashlib.sha256(content).hexdigest(),
                            "tools": tools, "ownership": owners[target]}
-    payload = json.dumps({"schema": "asset-snapshot/v1", "entries": entries}, sort_keys=True,
-                         separators=(",", ":"), allow_nan=False).encode("utf-8")
+    document = {"schema": "asset-snapshot/v1", "entries": entries}
+    if profile.schema != V1_SCHEMA:
+        document["schema"] = "asset-snapshot/v2"
+        document["profileSchema"] = profile.schema
+    payload = json.dumps(document, sort_keys=True, separators=(",", ":"),
+                         allow_nan=False).encode("utf-8")
     if len(payload) > MAX_BYTES:
         raise SnapshotError("snapshot exceeds the byte limit")
     return CapturedSnapshot(payload, hashlib.sha256(payload).hexdigest())

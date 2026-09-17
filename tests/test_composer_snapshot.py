@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 from composer.bundle import TARGETS
+from composer.profiles import ComposerProfile, V1_PROFILE, V2_PROFILE
 from composer.snapshot import SnapshotError, capture_snapshot
 from composer.storage import MAX_BYTES, Root
 
@@ -48,6 +49,96 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(observation["tools"], ["read"] if target.startswith("agents/") else None)
             self.assertEqual((self.path / target).read_bytes(), self.data[target])
         self.assertFalse((self.path / "state.json").exists())
+
+    def test_v1_payload_literal_and_digest_remain_historical(self):
+        result = self.capture()
+        expected_entries = {
+            target: {
+                "sha256": hashlib.sha256(self.data[target]).hexdigest(),
+                "tools": ["read"] if target.startswith("agents/") else None,
+                "ownership": "user-owned",
+            }
+            for target in V1_PROFILE.targets
+        }
+        expected = json.dumps(
+            {"schema": "asset-snapshot/v1", "entries": expected_entries},
+            sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+        self.assertEqual(result.payload, expected)
+        self.assertEqual(result.digest, "d0c3f91f22960b3c37e196a79943cb6f41df28b20e8d039bce0eb8fcd7fd8f82")
+
+    def _populate_v2(self):
+        owners = dict.fromkeys(V2_PROFILE.targets, "user-owned")
+        for target in V2_PROFILE.targets:
+            if target not in self.data:
+                data = b"Synthetic package asset.\n"
+                path = self.path / target
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                self.data[target] = data
+        return owners
+
+    def test_v2_capture_is_canonical_and_records_absent_optional_target(self):
+        owners = self._populate_v2()
+        optional = V2_PROFILE.optional_targets[0]
+        (self.path / optional).unlink()
+        with Root(self.path) as root:
+            result = capture_snapshot(root, declared_ownership=owners, profile=V2_PROFILE)
+        expected_entries = {
+            target: None if target == optional else {
+                "sha256": hashlib.sha256(self.data[target]).hexdigest(),
+                "tools": ["read"] if target.startswith("agents/") else None,
+                "ownership": "user-owned",
+            }
+            for target in V2_PROFILE.targets
+        }
+        expected = json.dumps({
+            "schema": "asset-snapshot/v2",
+            "profileSchema": "deterministic-assets/v2",
+            "entries": expected_entries,
+        }, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        self.assertEqual(result.payload, expected)
+        self.assertEqual(result.entries, expected_entries)
+        self.assertEqual(list(result.entries), list(V2_PROFILE.targets))
+        self.assertIsNone(result.entries[optional])
+
+    def test_profile_selection_rejects_cross_inventory_before_reads(self):
+        v2_owners = self._populate_v2()
+        invalid = (
+            (V2_PROFILE, self.owners),
+            (V1_PROFILE, v2_owners),
+            (V2_PROFILE, dict(v2_owners, **{"assets/unknown.md": "user-owned"})),
+        )
+        with Root(self.path) as root, mock.patch.object(root, "read") as read:
+            for profile, owners in invalid:
+                with self.subTest(profile=profile.schema), self.assertRaises(SnapshotError):
+                    capture_snapshot(root, declared_ownership=owners, profile=profile)
+            read.assert_not_called()
+
+    def test_invalid_or_forged_profile_is_rejected_before_reads(self):
+        forged = object.__new__(ComposerProfile)
+        object.__setattr__(forged, "schema", V2_PROFILE.schema)
+        object.__setattr__(forged, "required_targets", V2_PROFILE.required_targets)
+        object.__setattr__(forged, "optional_targets", ())
+        with Root(self.path) as root, mock.patch.object(root, "read") as read:
+            for profile in (object(), forged):
+                with self.subTest(profile=type(profile).__name__), self.assertRaises(SnapshotError):
+                    capture_snapshot(root, declared_ownership=self.owners, profile=profile)
+            read.assert_not_called()
+
+    def test_selected_profile_targets_are_read_sequentially_in_canonical_order(self):
+        owners = self._populate_v2()
+        with Root(self.path) as root:
+            original_read = root.read
+            reads = []
+
+            def read(target):
+                reads.append(target)
+                return original_read(target)
+
+            with mock.patch.object(root, "read", side_effect=read):
+                capture_snapshot(root, declared_ownership=owners, profile=V2_PROFILE)
+        self.assertEqual(reads, list(V2_PROFILE.targets))
 
     def test_missing_targets_and_directories_remain_absent(self):
         for target in TARGETS:
