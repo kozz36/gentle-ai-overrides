@@ -63,7 +63,7 @@ assert_policy_contract() {
 
 validate_delta_shape() {
   awk '
-    BEGIN { expected["skill"] = expected["details"] = expected["pi"] = 1 }
+    BEGIN { expected["skill"] = expected["details"] = expected["pi"] = expected["gentle-init-pi"] = 1 }
     /^<!-- shape:[a-z][a-z0-9-]* -->$/ {
       name = $0; sub(/^<!-- shape:/, "", name); sub(/ -->$/, "", name)
       if (!(name in expected) || opened[name] || inside) bad = 1
@@ -99,14 +99,14 @@ test_policy_contract() (
   local init="$ROOT/deltas/sdd-init-rubric.md" consumer="$ROOT/deltas/rubric-tdd.md"
   assert_project_declared_satisfiability "$init" 'sdd-init delta' || exit 1
   assert_policy_contract "$init" 'sdd-init delta' || exit 1
-  grep -Fq 'canonical `sdd-init` authoritative policy directly for the active artifact store' "$consumer" || fail 'consumer does not read canonical policy directly' || exit 1
-  grep -Fq 'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' "$consumer" || fail 'consumer can reuse a first-slice resolution session-wide' || exit 1
-  grep -Fq 'caches the canonical policy ONCE per session' "$consumer" || fail 'consumer does not cache only canonical policy' || exit 1
+  grep -Fq 'approved workflow-neutral project-policy authority' "$consumer" || fail 'consumer lacks workflow-neutral authority' || exit 1
+  grep -Fq 'resolves every distinct apply/verify work slice AFRESH' "$consumer" || fail 'consumer can reuse a first-slice resolution session-wide' || exit 1
+  grep -Fq 'caches the approved policy ONCE per session' "$consumer" || fail 'consumer does not cache only approved policy' || exit 1
   grep -Fq '`default` ONLY when no non-default row matches' "$consumer" || fail 'consumer does not reserve default for unmatched slices' || exit 1
-  grep -Fq 'union only applicable non-default rows' "$consumer" || fail 'consumer unions inapplicable or default rows' || exit 1
+  grep -Fq '`strictest-wins` and evidence union apply only when the policy declares them' "$consumer" || fail 'consumer makes declared all-rows resolution unconditional' || exit 1
   grep -Fq "Forward the effective MODE and the policy's exact declared commands, disciplines/evidence, and skill paths" "$consumer" || fail 'consumer does not forward effective mode and exact declared policy' || exit 1
-  grep -Fq 'Consumer-envelope or compiler diagnostics MUST NOT supersede a valid canonical policy' "$consumer" || fail 'consumer diagnostics can supersede canonical policy' || exit 1
-  grep -Fq 'Binary `strict_tdd` fallback is permitted ONLY when no rubric exists' "$consumer" || fail 'consumer lacks the no-rubric fallback boundary' || exit 1
+  grep -Fq 'Consumers are read-only.' "$consumer" || fail 'consumer lacks read-only ownership boundary' || exit 1
+  grep -Fq 'Binary `strict_tdd` fallback is permitted ONLY when no approved rubric exists' "$consumer" || fail 'consumer lacks the no-rubric fallback boundary' || exit 1
   ! grep -Fq 'Resolve it ONCE per session' "$consumer" || fail 'consumer resolves a first slice only once per session' || exit 1
   ! grep -Fq 'then caches that resolution' "$consumer" || fail 'consumer caches a slice resolution' || exit 1
   ! grep -Fq 'recovery_action=run ' "$consumer" || fail 'consumer fabricates runtime recovery dispatch' || exit 1
@@ -155,7 +155,7 @@ test_human_clarification_contract() (
   extract_rubric_tdd_shape pi-workflow "$pi" || exit 1
 
   for file in "$list" "$prose" "$pi"; do
-    grep -Fq 'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' "$file" || fail "$(basename -- "$file") does not require human clarification" || exit 1
+    grep -Fq 'MUST stop apply/verify for human clarification' "$file" || fail "$(basename -- "$file") does not require human clarification" || exit 1
     grep -Fq 'do not fabricate runtime recovery dispatch.' "$file" || fail "$(basename -- "$file") permits fabricated recovery dispatch" || exit 1
     ! grep -Fq 'recovery_action=run ' "$file" || fail "$(basename -- "$file") retains runtime recovery dispatch" || exit 1
   done
@@ -189,27 +189,23 @@ test_pi_workflow_consumer_contract() (
   for invariant in \
     '<!-- gentle-ai:pi-rubric-forwarding -->' \
     '<!-- /gentle-ai:pi-rubric-forwarding -->' \
-    'canonical `sdd-init` authoritative policy directly for the active artifact store' \
-    'active/authoritative' \
-    'caches the canonical policy ONCE per session' \
-    'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' \
+    'Resolve `gentle-init/{project}` first.' \
+    'Only when that new authority is absent, resolve the legacy `sdd-init/{project}` authority.' \
+    'Once `gentle-init/{project}` exists, never read, compare, or consult the legacy authority.' \
+    'resolve every distinct slice AFRESH from its declared task intent and declared matching rules' \
     '`default` ONLY when no non-default row matches' \
-    'union only applicable non-default rows' \
+    'use `all-rows`, `strictest-wins`, and evidence union only when the policy declares them.' \
     "Forward the effective MODE and the policy's exact declared commands, disciplines/evidence, and skill paths" \
     'without substituting downstream matching rules or policy rewriting' \
-    'Consumer-envelope or compiler diagnostics MUST NOT supersede a valid canonical policy' \
-    'Producer and activation semantics remain owned by `sdd-init`' \
-    'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' \
-    'Binary `strict_tdd` fallback is permitted ONLY when no rubric exists.' \
-    'effective MODE is `strict-tdd`' \
-    'Gentle AI 2.6.0 with `gentle-pi@2.4.0`' \
-    'APPEND_SYSTEM.md remains installer-managed and untouched.' \
-    'The orchestrator is read-only: never author, generate, mutate, broaden, infer, alter, or rewrite the authoritative policy' \
-    'It may mechanically match existing policy rows using only those declared rules and must never invent commands or evidence.'; do
+    'The Pi parent owns producer and activation handling; `gentle-init` is a candidate author only.' \
+    'This consumer is read-only' \
+    'Binary `strict_tdd` fallback is permitted ONLY when no approved rubric exists.' \
+    'effective MODE is `strict-tdd`'; do
     grep -Fq "$invariant" "$consumer" || fail "Pi workflow consumer lacks invariant: $invariant" || exit 1
   done
-  grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' "$apply" || fail 'Pi workflow host row is not resolver-backed' || exit 1
-  grep -Fqx 'pi|sdd-init-pi|@pi-gentle-pi-sdd-init@' "$apply" || fail 'Pi sdd-init host row is not resolver-backed' || exit 1
+  grep -Fqx 'pi|pi-gentle-init-transaction|@pi-gentle-pi-gentle-init@' "$apply" || fail 'Pi grouped transaction host row is not resolver-backed' || exit 1
+  ! grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' "$apply" || fail 'Pi workflow remains independently mapped' || exit 1
+  ! grep -Fqx 'pi|pi-odd-forwarding|@pi-gentle-pi-delegation@' "$apply" || fail 'Pi ODD remains independently mapped' || exit 1
   if grep -Fqx 'pi|pi-rubric-workflow|.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md' "$apply"; then
     fail 'Pi workflow host row retains the retired static npm-only path' || exit 1
   fi
@@ -218,7 +214,18 @@ test_pi_workflow_consumer_contract() (
   fi
   grep -Fq 'resolve_pi_gentle_package_root_rel()' "$apply" || fail 'Pi shared package-root resolver is missing' || exit 1
   grep -Fq "resolve_pi_gentle_asset_rel 'assets/sdd-orchestrator-workflow.md'" "$apply" || fail 'Pi workflow does not use the shared package resolver' || exit 1
-  grep -Fq "resolve_pi_gentle_asset_rel 'assets/agents/sdd-init.md'" "$apply" || fail 'Pi sdd-init does not use the shared package resolver' || exit 1
+  grep -Fq "resolve_pi_gentle_asset_rel 'assets/agents/gentle-init.md'" "$apply" || fail 'Pi gentle-init does not use the shared package resolver' || exit 1
+  grep -Fq 'pi_gentle_init_transaction_apply()' "$apply" || fail 'Pi grouped capability-gated migration is missing' || exit 1
+  grep -Fq 'commit_replacement_group()' "$apply" || fail 'Pi grouped migration transaction is missing' || exit 1
+  grep -Fq 'backup-${labels[i]}' "$apply" || fail 'Pi transaction does not back up every changing target before rename' || exit 1
+  grep -Fq 'pi_byte_transform()' "$apply" || fail 'Pi byte-preserving transform is missing' || exit 1
+  grep -Fq 'command -v python3' "$apply" || fail 'Pi byte-transform dependency is not validated' || exit 1
+  grep -Fq 'pair_test_hook()' "$apply" || fail 'Pi pair transaction fault hooks are missing' || exit 1
+  grep -Fq 'GENTLE_AI_TEST_MODE' "$apply" || fail 'Pi pair transaction hooks lack an explicit test-mode gate' || exit 1
+  grep -Fq 'PI_TRANSACTION_RECOVERY_ARTIFACTS' "$apply" || fail 'Pi rollback recovery-artifact reporting is missing' || exit 1
+  grep -Fq 'MISSING-CAPABILITY' "$apply" || fail 'Pi missing python capability reporting is missing' || exit 1
+  grep -Fq 'RECOVERY-REQUIRED' "$apply" || fail 'Pi rollback recovery reporting is missing' || exit 1
+  grep -Fq "PI_GENTLE_INIT_PUBLICATION_BOUNDARY='## Publication boundary'" "$apply" || fail 'Pi gentle-init publication anchor is missing' || exit 1
   grep -Fq "PI_WORKFLOW_BINARY='For \`sdd-apply\` and \`sdd-verify\`, read \`openspec/config.yaml\` when present." "$apply" || fail 'Pi workflow binary anchor is missing' || exit 1
   grep -Fq 'pi_rubric_workflow_transform()' "$apply" || fail 'Pi workflow transform is missing' || exit 1
   grep -Fq 'opens != closes || opens > 1 || (opens == 1 && open_line >= close_line)' "$apply" || fail 'Pi workflow marker cardinality guard is missing' || exit 1
@@ -257,23 +264,13 @@ test_pi_policy_defined_forwarding_contract() (
   local pi="$TMP_ROOT/pi-policy-defined.md" invariant
   extract_rubric_tdd_shape pi-workflow "$pi" || exit 1
   for invariant in \
-    'session-selected artifact store; do not switch stores merely because `openspec/config.yaml` exists.' \
-    'A valid rubric and its resolved slice instruction govern this forwarding.' \
-    'The preserved binary Strict TDD clause above is fallback-only when there is genuinely no rubric.' \
-    'Missing required canonical policy, or invalid, ambiguous, or conflicting policy, is not no rubric' \
-    'Policy-defined matching, precedence, and exceptions govern each slice.' \
-    'Do not replace declared exceptions or precedence with generic all-matches, strictest-wins, or union behavior.' \
-    'If the canonical policy explicitly declares `all-rows` with `strictest-wins` and evidence union, use that declared resolution; otherwise use its declared resolution.' \
-    'Only use `default` when no non-default match exists and that policy actually declares a default.' \
-    'Forward only commands applicable to the current phase under declared bindings.' \
-    'Do not reuse an apply command for verify, or a verify command for apply, unless the policy explicitly declares it shared.' \
-    'A legacy flat command with no phase binding remains applicable as declared' \
-    'Before launch, add plain prompt content to the existing parent phase prompt: the canonical source reference, slice, resolved MODE, phase-applicable exact commands, disciplines/evidence, and skill paths; then send it to the child.' \
-    "A child agent's own configuration or gate can still conflict; do not claim this prompt guarantees child enforcement or change the child without separate scope." \
-    'Preflight or native-status injection by a runtime extension does not resolve MODE; the parent orchestrator remains responsible for MODE resolution.' \
-    'This is parent LLM instruction, not a new parser, runtime adapter, schema, trace protocol, or capture protocol.' \
-    'Do not inline all artifact contents; executors read their artifacts normally.' \
-    'This forwarding applies only to `sdd-apply` and `sdd-verify`, not to RDD reviewers.'; do
+    'Resolve `gentle-init/{project}` first.' \
+    'Only when that new authority is absent, resolve the legacy `sdd-init/{project}` authority.' \
+    'Once `gentle-init/{project}` exists, never read, compare, or consult the legacy authority.' \
+    'Apply only declared matching, precedence, exceptions, and evidence-union rules' \
+    'Forward only phase-applicable commands under declared bindings' \
+    'This forwarding applies only to `sdd-apply` and `sdd-verify`, not to RDD reviewers.' \
+    'This consumer is read-only'; do
     grep -Fq "$invariant" "$pi" || fail "Pi workflow lacks policy-defined forwarding: $invariant" || exit 1
   done
   ! grep -Fq 'otherwise apply strictest MODE precedence and union only applicable non-default rows' "$pi" || fail 'Pi workflow retains an unconditional all-rows resolution' || exit 1
@@ -372,6 +369,38 @@ test_two_level_delivery_catalog_contract() (
   ! grep -Fqi 'complete reader-friendly Markdown projection before the selected YAML' "$readme" || fail 'README retains the contradictory complete-projection-first wording' || exit 1
 )
 
+test_neutral_pi_payload_contract() (
+  local payload="$TMP_ROOT/gentle-init-pi.md" historic="$TMP_ROOT/historic-pi.md" category forbidden
+  extract_init_shape gentle-init-pi "$payload" || exit 1
+  extract_init_shape pi "$historic" || exit 1
+  grep -Fqx '<!-- gentle-ai:gentle-init-rubric -->' "$payload" || fail 'neutral Pi payload lacks its own marker' || exit 1
+  grep -Fqx '<!-- gentle-ai:sdd-init-rubric -->' "$historic" || fail 'historical Pi payload changed its legacy marker' || exit 1
+  cmp -s "$payload" "$historic" && fail 'neutral Pi payload aliases the historical payload' && exit 1
+  for text in \
+    '`unit`, `integration`, `e2e`, `coverage`, `lint`, `typecheck`, `format`, and `build`' \
+    '`command_declaration` and `tool_proof`' \
+    'detected-but-unsatisfied' \
+    'MODE is `skip < standard < strict-tdd`' \
+    'Select `default` only when no non-default row matches' \
+    'strictest-wins and evidence union only when explicitly declared' \
+    'RED, GREEN, TRIANGULATE, and REFACTOR evidence' \
+    'generated/manual provenance' \
+    'byte-preserved manual rows' \
+    '`work-type | MODE | key obligation` table' \
+    'complete exact candidate reference'; do
+    grep -Fq "$text" "$payload" || fail "neutral Pi payload lacks required semantics: $text" || exit 1
+  done
+  for category in new-observable-behavior bugfix data-schema-migration mechanical-behavior-preserving-change refactor docs-only ci configuration executable-scripts dependencies tests-only-maintenance; do
+    grep -Fq "\`$category\`" "$payload" || fail "neutral Pi payload omits catalog category: $category" || exit 1
+  done
+  for forbidden in 'strict|rubric' 'allowed_answers:' 'ask the user' 'single writer' 'sdd-init/{project}' 'Publication boundary' 'readback' 'write' 'bash' 'mem_save' 'approval'; do
+    ! grep -Fq "$forbidden" "$payload" || fail "neutral Pi payload contains forbidden ownership term: $forbidden" || exit 1
+  done
+  grep -Fq 'INIT_RUBRIC_PI="$(extract_init_rubric_shape pi)"' "$ROOT/apply.sh" || fail 'apply does not retain the historical Pi payload separately' || exit 1
+  grep -Fq 'GENTLE_INIT_RUBRIC_PI="$(extract_init_rubric_shape gentle-init-pi)"' "$ROOT/apply.sh" || fail 'apply does not extract the neutral Pi payload separately' || exit 1
+  ! grep -Fq 'GENTLE_INIT_RUBRIC_PI="$(printf' "$ROOT/apply.sh" || fail 'apply derives the neutral payload from historical bytes' || exit 1
+)
+
 run() {
   local name="$1"
   if "$name"; then
@@ -392,6 +421,7 @@ run test_pi_policy_defined_forwarding_contract
 run test_delta_shape_grammar
 run test_prompt_procedure_contract
 run test_two_level_delivery_catalog_contract
+run test_neutral_pi_payload_contract
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

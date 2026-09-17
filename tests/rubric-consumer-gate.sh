@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hermetic state-gate and host-forwarding checks for rubric consumers.
+# Hermetic semantic and ownership checks for workflow-neutral rubric consumers.
 set -uo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,7 +10,6 @@ FAIL=0
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; return 1; }
 pass() { printf 'PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
-digest() { cksum "$1" | awk '{print $1 ":" $2}'; }
 extract_shape() {
   awk -v shape="$2" '
     $0 == "<!-- shape:" shape " -->" { inside = 1; next }
@@ -28,176 +27,176 @@ load_overlay() {
   source "$ROOT/apply.sh"
 }
 
-assert_forwarding() {
-  local file="$1" label="$2" content text
-  content="$(tr '\n' ' ' < "$file" | tr -s ' ')"
-  for text in \
-    'read the canonical `sdd-init` authoritative policy directly for the active artifact store' \
-    'caches the canonical policy ONCE per session' \
-    'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' \
+assert_generic_consumer() {
+  local file="$1" label="$2" text
+  text="$(tr '\n' ' ' < "$file" | tr -s ' ')"
+  for required in \
+    'approved workflow-neutral project-policy authority' \
+    'caches the approved policy ONCE per session' \
+    'resolves every distinct apply/verify work slice AFRESH' \
     '`default` ONLY when no non-default row matches' \
-    'Forward the effective MODE and the policy'"'"'s exact declared commands, disciplines/evidence, and skill paths' \
-    'without substituting downstream matching rules or policy rewriting.' \
-    'Consumer-envelope or compiler diagnostics MUST NOT supersede a valid canonical policy.' \
-    'Producer and activation semantics remain owned by `sdd-init`.' \
-    'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' \
-    'do not fabricate runtime recovery dispatch.' \
-    'Binary `strict_tdd` fallback is permitted ONLY when no rubric exists.'; do
-    printf '%s\n' "$content" | grep -Fq "$text" || fail "$label lacks $text" || return 1
+    '`strictest-wins` and evidence union apply only when the policy declares them' \
+    "Forward the effective MODE and the policy's exact declared commands, disciplines/evidence, and skill paths" \
+    'Consumers are read-only.' \
+    'MUST stop apply/verify for human clarification' \
+    'Binary `strict_tdd` fallback is permitted ONLY when no approved rubric exists.' \
+    'Generic non-Pi hosts retain their legacy `sdd-init` producer ownership' \
+    'do not require a `gentle-init/{project}` locator'; do
+    printf '%s\n' "$text" | grep -Fq "$required" || fail "$label lacks $required" || return 1
   done
-  for text in RubricConsumerEnvelopeV1 RubricConsumerBlockedV1 'canonical-model digest' 'state gate' 'Resolve it ONCE per session' 'then caches that resolution' 'recovery_action=run '; do
-    ! printf '%s\n' "$content" | grep -Fq "$text" || fail "$label retains obsolete $text" || return 1
+  for forbidden in 'RubricConsumerEnvelopeV1' 'RubricConsumerBlockedV1' 'recovery_action=run ' 'canonical `sdd-init` authoritative policy'; do
+    ! printf '%s\n' "$text" | grep -Fq "$forbidden" || fail "$label retains obsolete $forbidden" || return 1
   done
 }
 
-generic_resolution_matches() {
-  grep -Fq 'otherwise apply strictest MODE precedence and union only applicable non-default rows' "$1"
-}
-
-pi_forwarding_matches() {
-  local file="$1" text
-  for text in \
-    'session-selected artifact store; do not switch stores merely because `openspec/config.yaml` exists.' \
-    'A valid rubric and its resolved slice instruction govern this forwarding.' \
-    'The preserved binary Strict TDD clause above is fallback-only when there is genuinely no rubric.' \
-    'Missing required canonical policy, or invalid, ambiguous, or conflicting policy, is not no rubric' \
-    'Policy-defined matching, precedence, and exceptions govern each slice.' \
-    'Do not replace declared exceptions or precedence with generic all-matches, strictest-wins, or union behavior.' \
-    'If the canonical policy explicitly declares `all-rows` with `strictest-wins` and evidence union, use that declared resolution; otherwise use its declared resolution.' \
-    'Only use `default` when no non-default match exists and that policy actually declares a default.' \
-    'Forward only commands applicable to the current phase under declared bindings.' \
-    'Do not reuse an apply command for verify, or a verify command for apply, unless the policy explicitly declares it shared.' \
-    'A legacy flat command with no phase binding remains applicable as declared' \
-    'Before launch, add plain prompt content to the existing parent phase prompt: the canonical source reference, slice, resolved MODE, phase-applicable exact commands, disciplines/evidence, and skill paths; then send it to the child.' \
-    "A child agent's own configuration or gate can still conflict; do not claim this prompt guarantees child enforcement or change the child without separate scope." \
-    'Preflight or native-status injection by a runtime extension does not resolve MODE; the parent orchestrator remains responsible for MODE resolution.' \
-    'This is parent LLM instruction, not a new parser, runtime adapter, schema, trace protocol, or capture protocol.' \
-    'Do not inline all artifact contents; executors read their artifacts normally.' \
-    'This forwarding applies only to `sdd-apply` and `sdd-verify`, not to RDD reviewers.'; do
-    grep -Fq "$text" "$file" || return 1
+assert_pi_consumer() {
+  local file="$1" label="$2"
+  for required in \
+    '`gentle-init/{project}` first' \
+    'legacy `sdd-init/{project}` authority' \
+    'Once `gentle-init/{project}` exists, never' \
+    'Select `default` ONLY when no non-default row matches and the policy actually declares a default.' \
+    '`strictest-wins`, and evidence union only when the policy declares them.' \
+    'Forward only phase-applicable commands under declared bindings' \
+    'do not reuse an apply command for verify unless the policy declares it shared.' \
+    'unknown needed phase binding requires clarification, never an invented command.' \
+    'Do not inline all artifact contents; executors read their declared artifacts normally.' \
+    'The Pi parent owns producer and activation handling; `gentle-init` is a candidate author only.' \
+    'Runtime preflight or native-status injection does not resolve MODE; prompt delivery does not prove child enforcement.' \
+    'Declared work intent selects MODE; project scope selects only applicable command bindings.' \
+    'Test-only evidence may bind mapped production-scope evidence but never infers production intent.' \
+    'Mixed intents union applicable scoped evidence and select the highest applicable MODE only after explicit exceptions and precedence.' \
+    'A manual old-path rule conflict with intent policy requires clarification; never rewrite the manual row.' \
+    'Unmatched executable, configuration, or CI work needs a visible rationale or blocking decision; never silently receives no evidence.' \
+    'read-only'; do
+    grep -Fq "$required" "$file" || fail "$label lacks $required" || return 1
   done
-  # Bounded regression guards; this is not general prose-contradiction parsing.
-  ! grep -Fq 'Always choose the highest MODE.' "$file" &&
-    ! grep -Fq 'otherwise apply strictest MODE precedence and union only applicable non-default rows' "$file"
-}
-
-assert_pi_forwarding() {
-  pi_forwarding_matches "$1" || fail "$2 lacks the policy-defined Pi forwarding contract"
-}
-
-test_consumer_wording_uses_canonical_policy() (
-  local shape output
-  for shape in list-item prose cache-sentence pi-workflow; do
-    output="$TMP_ROOT/$shape.md"
-    extract_shape "$ROOT/deltas/rubric-tdd.md" "$shape" > "$output"
-    grep -Fq 'canonical `sdd-init` authoritative policy directly' "$output" || fail "$shape does not read canonical policy directly" || exit 1
-    ! grep -Fq 'RubricConsumerEnvelopeV1' "$output" || fail "$shape retains the consumer envelope" || exit 1
-    ! grep -Fq 'RubricConsumerBlockedV1' "$output" || fail "$shape retains the consumer blocked envelope" || exit 1
-    grep -Fq 'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' "$output" || fail "$shape can reuse a first-slice resolution session-wide" || exit 1
-    ! grep -Fq 'Resolve it ONCE per session' "$output" || fail "$shape resolves a first slice only once per session" || exit 1
-    ! grep -Fq 'recovery_action=run ' "$output" || fail "$shape fabricates runtime recovery dispatch" || exit 1
+  for forbidden in \
+    'Always choose the highest MODE.' \
+    'all matching rows always apply' \
+    'strictest-wins and evidence union always apply'; do
+    ! grep -Fqi "$forbidden" "$file" || fail "$label contradicts declared policy resolution: $forbidden" || return 1
   done
-  output="$TMP_ROOT/pi-workflow.md"
-  extract_shape "$ROOT/deltas/rubric-tdd.md" pi-workflow > "$output"
-  assert_pi_forwarding "$output" 'Pi workflow' || exit 1
-  grep -Fq 'It may mechanically match existing policy rows using only those declared rules and must never invent commands or evidence.' "$output" || fail 'Pi workflow does not permit mechanical matching of existing rows' || exit 1
-  ! grep -Fq 'never author, generate, mutate, broaden, infer, select' "$output" || fail 'Pi workflow forbids selecting existing rows' || exit 1
-)
-
-test_temporary_home_host_goldens() (
-  local prose="$TMP_ROOT/prose" list="$TMP_ROOT/list" json="$TMP_ROOT/opencode.json" pi_input="$TMP_ROOT/pi-input" pi_workflow="$TMP_ROOT/pi-workflow" host
-  load_overlay
-  printf '%s\n' "$ANCHOR_PROSE" > "$TMP_ROOT/prose-input"
-  rubric_transform_prose < "$TMP_ROOT/prose-input" > "$prose" || fail 'Claude prose golden did not render' || exit 1
-  printf '%s\n' "$ANCHOR_ITEM3" "$CACHE_OLD" > "$TMP_ROOT/list-input"
-  rubric_transform_list < "$TMP_ROOT/list-input" > "$list" || fail 'list golden did not render' || exit 1
-  printf '%s\n\n%s\n\n%s\n' "$PI_WORKFLOW_HEADING" "$PI_WORKFLOW_BINARY" "$PI_WORKFLOW_ARCHIVE" > "$pi_input"
-  pi_rubric_workflow_transform < "$pi_input" > "$pi_workflow" || fail 'Pi workflow golden did not render' || exit 1
-  jq -n --arg prompt "$ANCHOR_ITEM3"$'\n'"$CACHE_OLD" '{agent: {"gentle-orchestrator": {prompt: $prompt}}}' > "$json"
-  rubric_apply_json "$json" || fail 'OpenCode JSON golden did not render' || exit 1
-  assert_forwarding "$prose" 'Claude lazy prose' || exit 1
-  generic_resolution_matches "$prose" || fail 'Claude lazy prose lost its declared all-rows resolution' || exit 1
-  for host in Cursor 'VS Code Copilot' 'Gemini CLI' Antigravity; do
-    assert_forwarding "$list" "$host list" || exit 1
-    generic_resolution_matches "$list" || fail "$host list lost its declared all-rows resolution" || exit 1
-  done
-  assert_pi_forwarding "$pi_workflow" 'Pi workflow' || exit 1
-  grep -Fq 'The orchestrator reads the canonical `sdd-init` authoritative policy directly from the active artifact store and caches the canonical policy ONCE per session, but must resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules; producer and activation semantics remain owned by `sdd-init`. Declared work intent selects MODE; project scope selects only applicable command bindings.' "$list" || fail 'list transform did not install intent/scope cache forwarding' || exit 1
-  grep -Fq 'Gentle AI 2.6.0 with `gentle-pi@2.4.0`' "$pi_workflow" || fail 'Pi workflow lacks the 2.6.0/2.4.0 compatibility contract' || exit 1
-  grep -Fq 'APPEND_SYSTEM.md remains installer-managed and untouched.' "$pi_workflow" || fail 'Pi workflow lacks the APPEND preservation boundary' || exit 1
-  jq -r '.agent["gentle-orchestrator"].prompt' "$json" > "$TMP_ROOT/opencode-prompt"
-  assert_forwarding "$TMP_ROOT/opencode-prompt" 'OpenCode JSON' || exit 1
-  generic_resolution_matches "$TMP_ROOT/opencode-prompt" || fail 'OpenCode JSON lost its declared all-rows resolution' || exit 1
-  jq -e --arg cache "$CACHE_NEW" '.agent["gentle-orchestrator"].prompt | contains($cache)' "$json" >/dev/null || fail 'OpenCode JSON did not preserve escaped canonical cache forwarding' || exit 1
-  host_rows | grep -Fqx 'codex|rubric-none|.codex/AGENTS.md' || fail 'Codex is not rubric-none' || exit 1
-  host_rows | grep -Fq 'kimi|' && fail 'Kimi must remain unmanaged' && exit 1
-  grep -Fq 'Kimi is explicitly current-scope unmanaged' "$ROOT/deltas/rubric-tdd.md" || fail 'Kimi scope is undocumented' || exit 1
-)
-
-test_pi_policy_regression_is_rejected() (
-  local pi_input="$TMP_ROOT/pi-regression-input" pi_workflow="$TMP_ROOT/pi-regression-workflow" regression="$TMP_ROOT/pi-regression-mutated" contradiction="$TMP_ROOT/pi-regression-contradiction"
-  load_overlay
-  printf '%s\n\n%s\n\n%s\n' "$PI_WORKFLOW_HEADING" "$PI_WORKFLOW_BINARY" "$PI_WORKFLOW_ARCHIVE" > "$pi_input"
-  pi_rubric_workflow_transform < "$pi_input" > "$pi_workflow" || fail 'Pi regression fixture did not render' || exit 1
-  assert_pi_forwarding "$pi_workflow" 'Pi regression fixture' || exit 1
-  sed 's/Policy-defined matching, precedence, and exceptions govern each slice\./Generic strictest matching governs each slice./' "$pi_workflow" > "$regression"
-  if pi_forwarding_matches "$regression"; then
-    fail 'Pi forwarding test accepts a generic-resolution regression' || exit 1
-  fi
-  sed 's|<!-- /gentle-ai:pi-rubric-forwarding -->|Always choose the highest MODE.\n<!-- /gentle-ai:pi-rubric-forwarding -->|' "$pi_workflow" > "$contradiction"
-  if pi_forwarding_matches "$contradiction"; then
-    fail 'Pi forwarding test accepts a positive-preserving MODE contradiction' || exit 1
-  fi
-)
-
-test_intent_scope_forwarding_contract() (
-  local shape output text
-  for shape in list-item prose cache-sentence pi-workflow; do
-    output="$TMP_ROOT/$shape-intent-scope.md"
-    extract_shape "$ROOT/deltas/rubric-tdd.md" "$shape" > "$output"
-    for text in \
-      'Declared work intent selects MODE; project scope selects only applicable command bindings.' \
-      'Test-only maintenance may bind mapped production-scope evidence but never infers production work intent.' \
-      'Mixed intents union applicable scoped evidence and select the highest applicable MODE only after explicit exceptions and precedence.' \
-      'A manual old-path rule conflict with intent policy is shown and requires clarification; never rewrite the manual row.' \
-      'Unmatched executable, configuration, or CI work needs a visible rationale or blocking decision; never silently receives no evidence.'; do
-      grep -Fq "$text" "$output" || fail "$shape lacks intent/scope forwarding: $text" || exit 1
+  if grep -Fq '### Approved Rubric Forwarding for ODD' "$file"; then
+    for required in \
+      '`strict-tdd` requires observed RED, GREEN, TRIANGULATE, and REFACTOR and enables native test-first activation.' \
+      '`standard` requires declared evidence without mandatory test-first ordering and disables native test-first activation while preserving applicable evidence and ordinary validation.' \
+      '`skip` has no automated test gate unless applicable rows declare unioned evidence; it disables native test-first activation while preserving applicable evidence and ordinary validation.' \
+      'Binary test-first activation represents sequencing only and never replaces the resolved MODE or evidence obligation.'; do
+      grep -Fq "$required" "$file" || fail "$label lacks ODD binary activation invariant: $required" || return 1
     done
+  fi
+}
+
+test_all_five_shapes_are_neutral() (
+  local shape file
+  for shape in list-item prose cache-sentence; do
+    file="$TMP_ROOT/$shape.md"
+    extract_shape "$ROOT/deltas/rubric-tdd.md" "$shape" > "$file"
+    assert_generic_consumer "$file" "$shape" || exit 1
+  done
+  for shape in pi-workflow pi-odd-forwarding; do
+    file="$TMP_ROOT/$shape.md"
+    extract_shape "$ROOT/deltas/rubric-tdd.md" "$shape" > "$file"
+    assert_pi_consumer "$file" "$shape" || exit 1
   done
 )
 
-# shellcheck disable=SC2016 # This contract compares literal Markdown strings containing backticks.
-test_pi_odd_forwarding_contract() (
-  local output text
-  output="$TMP_ROOT/pi-odd-forwarding.md"
-  extract_shape "$ROOT/deltas/rubric-tdd.md" pi-odd-forwarding > "$output"
-  [ -s "$output" ] || fail 'Pi ODD forwarding shape is missing' || exit 1
-  for text in \
-    'This is a parent-only ODD forwarding instruction.' \
-    'When an approved rubric exists, resolve its declared per-work intent rules through that rubric' \
-    'canonical locator and declared matching, precedence, and exceptions' \
-    'Resolve again for every distinct ODD task and every resume before launching its worker.' \
-    'Forward the resolved `strict-tdd`, `standard`, or `skip` MODE, the canonical rubric source, applicable exact commands, skill paths, and required disciplines/evidence' \
-    '`strict-tdd` means a full test-first cycle and maps native binary test-first activation to enabled.' \
-    '`standard` requires declared evidence without mandatory test-first ordering and maps that binary activation to disabled while preserving every applicable check and evidence obligation.' \
-        '`skip` has no automated test gate unless applicable rows union evidence; it maps test-first activation to disabled while preserving that union and native ordinary validation.' \
-        'Binary test-first activation represents sequencing only; it never replaces the resolved MODE or complete evidence obligation.' \
-        'For every supported resolved row, forward native ODD inputs: test-first activation, canonical source, and exact runner.' \
-        'runner is the one declared applicable test-first command for `strict-tdd`, and `not-applicable` for `standard` or `skip` rather than an invented command.' \
-        'If an exact ODD binding cannot be supplied, stop only that dependent worker launch and ask focused clarification; never repurpose an SDD command.' \
-    'If no approved rubric exists, use the existing configured or user-selected ODD mode, source, and exact runner.' \
-    'do not invoke `sdd-init` to resolve ODD TDD.' \
-    'The task document records resolved context and evidence; it does not replace the authoritative policy.' \
-    'Do not alter native ODD tracking, the full project Engram mirror, resume reconciliation, generic workers, or the RDD sequence.'; do
-    grep -Fq "$text" "$output" || fail "Pi ODD forwarding lacks: $text" || exit 1
-  done
+test_generic_shapes_transform_without_pi_locator() (
+  local prose="$TMP_ROOT/prose.md" list="$TMP_ROOT/list.md" json="$TMP_ROOT/opencode.json"
+  load_overlay
+  printf '%s\n' "$ANCHOR_PROSE" | rubric_transform_prose > "$prose" || fail 'prose transform refused anchor' || exit 1
+  printf '%s\n' "$ANCHOR_ITEM3" "$CACHE_OLD" | rubric_transform_list > "$list" || fail 'list transform refused anchor' || exit 1
+  jq -n --arg prompt "$ANCHOR_ITEM3" '{agent: {"gentle-orchestrator": {prompt: $prompt}}}' > "$json"
+  rubric_apply_json "$json" || fail 'OpenCode transform refused anchor' || exit 1
+  assert_generic_consumer "$prose" 'prose transform' || exit 1
+  assert_generic_consumer "$list" 'list transform' || exit 1
+  jq -r '.agent["gentle-orchestrator"].prompt' "$json" > "$TMP_ROOT/json.md"
+  assert_generic_consumer "$TMP_ROOT/json.md" 'OpenCode transform' || exit 1
+)
+
+test_pi_transforms_forward_new_authority() (
+  local workflow_input="$TMP_ROOT/workflow-input.md" workflow="$TMP_ROOT/workflow.md" odd_input="$TMP_ROOT/odd-input.md" odd="$TMP_ROOT/odd.md"
+  load_overlay
+  printf '%s\n\n%s\n\n%s\n' "$PI_WORKFLOW_HEADING" "$PI_WORKFLOW_BINARY" "$PI_WORKFLOW_ARCHIVE" > "$workflow_input"
+  pi_rubric_workflow_transform < "$workflow_input" > "$workflow" || fail 'Pi workflow transform refused fixture' || exit 1
+  assert_pi_consumer "$workflow" 'Pi workflow transform' || exit 1
+  cat > "$odd_input" <<EOF
+$PI_ODD_HEADING
+
+$PI_ODD_CHECKS
+
+$PI_ODD_DELEGATION
+EOF
+  pi_odd_forwarding_transform < "$odd_input" > "$odd" || fail 'Pi ODD transform refused fixture' || exit 1
+  assert_pi_consumer "$odd" 'Pi ODD transform' || exit 1
+)
+
+test_pi_consumer_application_is_capability_gated() (
+  local apply="$ROOT/apply.sh"
+  grep -Fq 'pi_gentle_init_transaction_apply()' "$apply" || fail 'Pi grouped capability gate is missing' || exit 1
+  grep -Fq 'selected package lacks gentle-init; all four Pi surfaces retained' "$apply" || fail 'Pi absent-capability four-surface no-op is missing' || exit 1
+  grep -Fq 'pi|pi-gentle-init-transaction|@pi-gentle-pi-gentle-init@' "$apply" || fail 'Pi grouped transaction target is not gentle-init-rooted' || exit 1
+  ! grep -Fqx 'pi|pi-rubric-workflow|@pi-gentle-pi-workflow@' "$apply" || fail 'Pi workflow remains independently mapped' || exit 1
+  ! grep -Fqx 'pi|pi-odd-forwarding|@pi-gentle-pi-delegation@' "$apply" || fail 'Pi ODD remains independently mapped' || exit 1
+)
+
+test_declared_resolution_and_fallback_boundaries() (
+  local pi="$TMP_ROOT/pi.md" odd="$TMP_ROOT/odd.md"
+  extract_shape "$ROOT/deltas/rubric-tdd.md" pi-workflow > "$pi"
+  extract_shape "$ROOT/deltas/rubric-tdd.md" pi-odd-forwarding > "$odd"
+  grep -Fq 'Apply only declared matching, precedence, exceptions, and evidence-union rules' "$pi" || fail 'Pi workflow invents resolution' || exit 1
+  grep -Fq 'Binary `strict_tdd` fallback is permitted ONLY when no approved rubric exists.' "$pi" || fail 'Pi workflow weakens binary fallback boundary' || exit 1
+  grep -Fq 'This forwarding applies only to `sdd-apply` and `sdd-verify`, not to RDD reviewers.' "$pi" || fail 'Pi workflow crossed the RDD reviewer boundary' || exit 1
+  grep -Fq 'not an absent rubric and MUST stop apply/verify for human clarification' "$pi" || fail 'Pi workflow treats invalid policy as absent' || exit 1
+  grep -Fq 'If no approved rubric exists, use the existing configured or user-selected ODD mode, source, and exact runner.' "$odd" || fail 'Pi ODD lacks absent-rubric fallback' || exit 1
+  grep -Fq 'An unknown, conflicting, ambiguous, or invalid source' "$odd" || fail 'Pi ODD lacks clarification boundary' || exit 1
+  grep -Fq 'exact runner is the declared test-first command for `strict-tdd`, and `not-applicable` for `standard` or `skip`' "$odd" || fail 'Pi ODD lacks exact-runner phase binding' || exit 1
+  grep -Fq 'Do not invoke `sdd-init` to determine ODD TDD' "$odd" || fail 'Pi ODD reintroduced init dispatch' || exit 1
+  grep -Fq 'Do not alter native ODD tracking, the full project Engram mirror, resume reconciliation, generic workers, or the RDD sequence.' "$odd" || fail 'Pi ODD changed native ownership boundaries' || exit 1
+)
+
+test_forwarding_invariant_mutations_are_rejected() (
+  local input="$TMP_ROOT/pi-forwarding-input.md" pi="$TMP_ROOT/pi-forwarding.md" odd_input="$TMP_ROOT/odd-forwarding-input.md" odd="$TMP_ROOT/odd-forwarding.md" mutation="$TMP_ROOT/forwarding-mutation.md"
+  load_overlay
+  printf '%s\n\n%s\n\n%s\n' "$PI_WORKFLOW_HEADING" "$PI_WORKFLOW_BINARY" "$PI_WORKFLOW_ARCHIVE" > "$input"
+  pi_rubric_workflow_transform < "$input" > "$pi" || fail 'workflow forwarding fixture did not render' || exit 1
+  sed 's/Runtime preflight or native-status injection does not resolve MODE; prompt delivery does not prove child enforcement\./runtime injection resolves MODE./' "$pi" > "$mutation"
+  if assert_pi_consumer "$mutation" 'runtime-resolution mutation' 2>/dev/null; then fail 'consumer validator accepted runtime MODE-resolution mutation' || exit 1; fi
+  sed 's/Test-only evidence may bind mapped production-scope evidence but never infers production intent\./tests infer production intent./' "$pi" > "$mutation"
+  if assert_pi_consumer "$mutation" 'intent-scope mutation' 2>/dev/null; then fail 'consumer validator accepted intent/scope mutation' || exit 1; fi
+  cat > "$odd_input" <<EOF
+$PI_ODD_HEADING
+
+$PI_ODD_CHECKS
+
+$PI_ODD_DELEGATION
+EOF
+  pi_odd_forwarding_transform < "$odd_input" > "$odd" || fail 'ODD forwarding fixture did not render' || exit 1
+  sed 's/disables native test-first activation while preserving applicable evidence and ordinary validation/enables native test-first activation/' "$odd" > "$mutation"
+  if assert_pi_consumer "$mutation" 'ODD activation mutation' 2>/dev/null; then fail 'consumer validator accepted standard/skip binary activation mutation' || exit 1; fi
+)
+
+test_mode_contradiction_is_rejected() (
+  local input="$TMP_ROOT/pi-mode-input.md" canonical="$TMP_ROOT/pi-mode-canonical.md" contradiction="$TMP_ROOT/pi-mode-contradiction.md"
+  load_overlay
+  printf '%s\n\n%s\n\n%s\n' "$PI_WORKFLOW_HEADING" "$PI_WORKFLOW_BINARY" "$PI_WORKFLOW_ARCHIVE" > "$input"
+  pi_rubric_workflow_transform < "$input" > "$canonical" || fail 'Pi workflow fixture did not render' || exit 1
+  sed 's|<!-- /gentle-ai:pi-rubric-forwarding -->|Always choose the highest MODE.\n<!-- /gentle-ai:pi-rubric-forwarding -->|' "$canonical" > "$contradiction"
+  grep -Fq 'Always choose the highest MODE.' "$contradiction" || fail 'contradiction fixture was not created' || exit 1
+  ! grep -Fq 'Always choose the highest MODE.' "$canonical" || fail 'canonical Pi workflow contains unconditional MODE selection' || exit 1
+  if assert_pi_consumer "$contradiction" 'contradictory Pi workflow' 2>/dev/null; then
+    fail 'real Pi consumer validator accepted unconditional MODE selection' || exit 1
+  fi
 )
 
 run() { if "$1"; then pass "${1#test_}"; else FAIL=$((FAIL + 1)); fi; }
-run test_consumer_wording_uses_canonical_policy
-run test_temporary_home_host_goldens
-run test_pi_policy_regression_is_rejected
-run test_intent_scope_forwarding_contract
-run test_pi_odd_forwarding_contract
+run test_all_five_shapes_are_neutral
+run test_generic_shapes_transform_without_pi_locator
+run test_pi_transforms_forward_new_authority
+run test_pi_consumer_application_is_capability_gated
+run test_declared_resolution_and_fallback_boundaries
+run test_forwarding_invariant_mutations_are_rejected
+run test_mode_contradiction_is_rejected
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

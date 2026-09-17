@@ -49,11 +49,12 @@ cd ~/gentle-ai-overrides
 
 Run the overlay after every `gentle-ai sync`, `gentle-ai upgrade`, or
 `gentle-ai install`. Gentle AI regenerates host configuration from embedded
-templates during those operations, replacing manual edits. After any
-`gentle-pi` package update, run `./apply.sh --check` and reapply: the Pi rubric
-and SDD-init overlays target package assets that package installation replaces.
-Pi may install that package from git or npm; the overlay resolves one configured
-package root for both assets rather than assuming one layout.
+templates during those operations, replacing manual edits. After any `gentle-pi`
+package update, run `./apply.sh --check`. Pi migration is capability-gated: current
+packages without the official `assets/agents/gentle-init.md` leave all Pi producer and
+consumer assets unchanged. Do not apply the neutral Pi migration before that official
+asset release. Pi may install that package from git or npm; the overlay resolves one
+configured package root for all Pi assets rather than assuming one layout.
 
 ## Usage
 
@@ -88,7 +89,11 @@ root first; a missing package can use the canonical Pi root, but an existing
 malformed preferred package stops as `MALFORMED` rather than mixing roots.
 Symlink, special, and unreadable asset entries are reported without being read.
 If a source subtree cannot be fully inventoried, its group is `UNAVAILABLE` and
-ownership comparison is skipped rather than claiming it current or missing. An
+ownership comparison is skipped rather than claiming it current or missing. Before
+reading or hashing package metadata, migration registries, or advisory assets, the
+overlay confines the path to the resolved selected package root; an internal symlink or
+escaping leaf is reported unsafe/unverifiable without passing its external target to
+`jq` or a checksum tool. An
 unavailable package, hash tool, or metadata never changes overlay exit semantics.
 
 The diagnostic is not a migration authority and never rewrites, resets, or
@@ -111,10 +116,13 @@ matches a known structure. After upgrading Gentle AI:
 
 The regression suite requires `jq`, Node.js, Python 3, and GNU coreutils
 `timeout`. `jq` is an existing runtime dependency; Node.js is used by the
-runtime Pi settings-parser fallback. Python 3 and GNU `timeout` are additional
-test-only prerequisites. `apply.sh` does not install these dependencies.
-Missing test prerequisites fail the suite rather than skip coverage.
-Python 3 is used only for the synchronous relative Unix-domain socket fixture.
+runtime Pi settings-parser fallback. Python 3 and GNU `timeout` are test
+prerequisites. `apply.sh` does not install these dependencies. Missing test
+prerequisites fail the suite rather than skip coverage. Python 3 is also a
+conditional runtime prerequisite when a selected future Pi package exposes the
+`gentle-init` migration capability; packages without that capability do not
+invoke Python. It is also used by the synchronous relative Unix-domain socket
+fixture.
 
 On macOS, install GNU coreutils and expose its unprefixed tools before running
 the suite; Homebrew otherwise names the binary `gtimeout` outside this path:
@@ -242,10 +250,13 @@ The delta file carries five blocks, each fenced by `<!-- shape:NAME -->` markers
 The canonical wording of `list-item` and `cache-sentence` is maintained in
 `deltas/rubric-tdd.md`, which is the overlay's source of truth.
 
-### 4. `deltas/sdd-init-rubric.md` — the TDD policy producer
+### 4. `deltas/sdd-init-rubric.md` — TDD policy producer payloads
 
-This prompt procedure keeps `sdd-init` as the sole project-policy writer while
-the consumer remains read-only. It detects the closed set of satisfiable evidence
+Non-Pi hosts retain the legacy `sdd-init` producer procedure below until official
+neutral surfaces exist. Pi-first migration keeps the exact historical Pi payload only
+for byte-recognized retirement and uses a distinct neutral `gentle-init` payload for
+candidate semantics; `gentle-init` is read-only and the parent owns publication.
+The legacy procedure detects the closed set of satisfiable evidence
 methods, displays an actual project-derived candidate and checksum before the
 `strict|rubric` representation choice, then requires separate explicit approval
 of the complete selected candidate before a write. Re-init preserves manual rows
@@ -299,11 +310,31 @@ write it. The ownership split is:
 - **CodeGraph guidance:** the installer/community-tool owns it; leaving APPEND entirely
   untouched preserves it.
 
-The Pi mappings retained by this overlay are the settings-selected `gentle-pi@2.4.0`
-package assets: its `assets/agents/sdd-init.md`, which receives the
-marker-delimited SDD-init rubric producer contract described above, and its
-package-owned lazy workflow, where the overlay inserts the
-`gentle-ai:pi-rubric-forwarding` block after the binary Strict TDD contract.
+The Pi-first migration is capability-gated. Current packages without an official
+regular `assets/agents/gentle-init.md` retain all four Pi surfaces byte-identically:
+`gentle-init` is not created, and legacy `sdd-init`, SDD workflow, and ODD delegation
+are unchanged. A capable selected package preflights all four sibling assets —
+`assets/agents/gentle-init.md`, `assets/agents/sdd-init.md`,
+`assets/sdd-orchestrator-workflow.md`, and optionally
+`assets/orchestrator-delegation.md` — then builds every candidate before backing up
+every changing target and replacing any. Every present sibling must be a regular,
+non-symlink file whose resolved path remains inside the resolved selected package root;
+symlinked components inside that selected root and lexical escapes are refused before
+package-content reads, hashes, backups, or replacements. A symlink above the selected
+root is not rejected merely because canonical package selection already resolved it. This is a best-effort filesystem confinement check, not
+a filesystem-wide lock: a low compare-to-rename TOCTOU window remains. All participating
+snapshots, including unchanged candidates, are checked after backups, immediately before
+each replacement, and unchanged participants are checked again before success. The overlay
+does not intentionally overwrite an observed concurrent edit, but cannot make an absolute
+never-overwritten claim across that final TOCTOU window. An operational replacement failure
+compensates only transaction-written targets. If compensation cannot complete, recovery
+output names only byte-verified retained artifacts and existing byte-matched backups;
+an unchanged participant that concurrently drifts is identified as such and is never
+labeled `backup-only`. This is a handled-operation guarantee, not crash or power-loss
+atomicity: there is no journal or recovery promise after process death.
+`gentle-init` is a read-only candidate author; the parent owns materialization,
+checksum-bound approval, exact publication, and readback. The composer remains
+deferred and does not authorize this migration.
 
 Both asset targets are resolved from one recognized gentle-pi package root in
 `~/.pi/agent/settings.json` (`packages` entries may be strings or objects with a
@@ -317,9 +348,14 @@ Both asset targets are resolved from one recognized gentle-pi package root in
   `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/{agents/sdd-init.md,sdd-orchestrator-workflow.md}`
 - exact npm package `npm:gentle-pi@<version>` (or unprefixed `gentle-pi`) →
   `~/.pi/agent/npm/node_modules/gentle-pi/assets/{agents/sdd-init.md,sdd-orchestrator-workflow.md}`
+- local `path:` or `file:` source lexically beneath `$HOME` and ending in `gentle-pi` →
+  that selected HOME-relative package root. This selection check is lexical; it does not
+  claim that the resolved package root remains physically beneath `$HOME`. After selection,
+  every package asset read and write is confined inside the canonical resolved selected root.
+  Truly lexically external, escaped, or traversal-bearing local paths remain unsupported.
 
 Every configured source whose exact package, repository, or local-path basename is
-`gentle-pi` is classified. Any noncanonical GitHub, local/path, or otherwise unsupported
+`gentle-pi` is classified. Any noncanonical GitHub, external/escaping local-path, or otherwise unsupported
 `gentle-pi` identity reports `PACKAGE-TARGET-CONFIG-FAILURE` before root fallback and writes
 nothing; unrelated names such as `gentle-pi-helper` are not classified as this package.
 The overlay parses settings with `jq` when available, otherwise with Node (provided by Pi),
@@ -344,8 +380,9 @@ worker consumption, and RDD sequence remain upstream-owned. The overlay resolves
 approved rubric per task/resume and delivers its resolved instruction to the parent
 launch prompt; it does not alter generic workers or prove their autonomous behavior.
 
-A package without that ODD asset or section is reported `n/a` and otherwise retains
-its existing behavior. Hermetic tests use a bounded exact released excerpt and verify
+A package without that ODD asset, or with a safe regular delegation asset lacking the
+supported ODD section, is reported `n/a` and otherwise retains its existing behavior.
+A symlinked, unsafe, or partial managed ODD marker fails closed. Hermetic tests use a bounded exact released excerpt and verify
 placement, refresh, idempotence, and preservation of unmanaged text. They do not run
 against an installed package, execute a model, prove policy enforcement, or establish
 full Gentle AI 3.x compatibility. The released 3.1.0 SDD Strict TDD anchor matches
@@ -366,9 +403,9 @@ dynamic save nudge and the rest of the plugin remain installer-managed.
 | --- | --- | --- | --- |
 | `claude-code` | `~/.claude/CLAUDE.md`, selected `~/.claude/output-styles/{neutral,gentleman}.md` | split shape — Rules + Expertise are heading-bounded; the selected native style is replaced wholesale | — |
 | `claude-code` | `~/.claude/skills/_shared/sdd-orchestrator-workflow.md` | — | **prose** — this surface has no numbered list |
-| `pi` | settings-selected gentle-pi `sdd-init`: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/agents/sdd-init.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md` | executable `sdd-init` asset | —; the SDD-init rubric producer contract is marker-delimited |
-| `pi` | settings-selected gentle-pi workflow: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/sdd-orchestrator-workflow.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md` | — | marker-delimited project-rubric forwarding after the binary Strict TDD contract; both Pi assets use the same selected package root and ambiguous roots fail closed |
-| `pi` | settings-selected gentle-pi delegation asset: git `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/orchestrator-delegation.md` or npm `~/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md` | — | optional `v3.1.0` ODD shape: marker-delimited parent-only rubric forwarding; absent ODD assets/sections are `n/a` |
+| `pi` | future settings-selected gentle-pi `gentle-init`: git or npm `assets/agents/gentle-init.md` | read-only candidate author; parent publisher | neutral marker-delimited payload only after official asset release; historical `sdd-init` bytes are recognition-only migration input |
+| `pi` | settings-selected gentle-pi workflow: git or npm `assets/sdd-orchestrator-workflow.md` | — | workflow-neutral forwarding applies only with valid `gentle-init`; otherwise this asset is byte-identical |
+| `pi` | settings-selected gentle-pi delegation asset: git or npm `assets/orchestrator-delegation.md` | — | optional ODD forwarding applies only with valid `gentle-init`; otherwise this asset is byte-identical |
 | `opencode` | `~/.config/opencode/AGENTS.md` | marker block | — |
 | `opencode` | `~/.config/opencode/opencode.json` | — | item 4, via `jq` into `.agent["gentle-orchestrator"].prompt` |
 | `opencode` | `~/.config/opencode/skills/sdd-init/SKILL.md`, `~/.config/opencode/skills/sdd-init/references/init-details.md` | managed `sdd-init` skill and reference; the skill is transformed before `## Decision Gates` | — |

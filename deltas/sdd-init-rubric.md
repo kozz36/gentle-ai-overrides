@@ -219,3 +219,19 @@ testing:
 ```
 <!-- /gentle-ai:sdd-init-rubric -->
 <!-- /shape:pi -->
+
+<!-- shape:gentle-init-pi -->
+<!-- gentle-ai:gentle-init-rubric -->
+## Project TDD Policy Semantics
+
+Use only this closed satisfiable evidence vocabulary: `unit`, `integration`, `e2e`, `coverage`, `lint`, `typecheck`, `format`, and `build`. A method is satisfiable only when a project-declared concrete command has reproducible environment or dependency proof; host-shell availability alone is insufficient.
+
+Each capability binding records independent `command_declaration` and `tool_proof`. `command_declaration` identifies the exact declared command; `tool_proof` identifies an independent manifest dependency, lockfile package, container/CI image, tool installation, or equivalent reproducible provider. Command or script text can never prove its own tool. Bind evidence to method, project scope/signature coverage, concrete command, and proof. Keep bindings scoped, never borrow a command across scopes, and record missing, identical, or circular proof as detected-but-unsatisfied.
+
+Maintain a visible work-type catalog with `new-observable-behavior`, `bugfix`, `data-schema-migration`, `mechanical-behavior-preserving-change`, `refactor`, `docs-only`, `ci`, `configuration`, `executable-scripts`, `dependencies`, and `tests-only-maintenance`. Each row is intent-qualified: declared work intent selects MODE and scope selects applicable bindings. Preserve manual rows exactly and require clarification for a manual-row conflict or unmatched executable, configuration, or CI work.
+
+MODE is `skip < standard < strict-tdd`. `strict-tdd` requires a test-first cycle with RED, GREEN, TRIANGULATE, and REFACTOR evidence; `standard` requires declared evidence without test-first ordering; `skip` has no automated test gate unless applicable rows declare evidence union. Select `default` only when no non-default row matches. Apply strictest-wins and evidence union only when explicitly declared, after declared precedence and exceptions.
+
+For active authoritative serialization, retain one authoritative rubric with generated/manual provenance, declared bindings, detected-but-unsatisfied entries, and byte-preserved manual rows. Provide a reader view with a `work-type | MODE | key obligation` table plus a complete exact candidate reference.
+<!-- /gentle-ai:gentle-init-rubric -->
+<!-- /shape:gentle-init-pi -->

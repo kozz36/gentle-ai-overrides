@@ -8,6 +8,9 @@ trap 'rm -rf -- "$TMP_ROOT"' EXIT
 
 PASS=0
 FAIL=0
+SKIPPED=0
+NAMED_SCENARIOS=0
+AGGREGATE_COMMANDS=0
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; return 1; }
 
@@ -227,7 +230,7 @@ EOF
   } > "$expected"
 
   rubric_transform_list < "$md" > "$transformed" || fail 'predecessor list transform refused a valid fixture' || exit 1
-  cmp -s "$transformed" "$expected" || fail 'predecessor list transform did not replace the complete item 4 block and cache sentence' || exit 1
+  cmp -s "$transformed" "$expected" || fail 'predecessor list transform did not match exact expected output' || exit 1
   ! grep -Fq "$predecessor_cache" "$transformed" || fail 'predecessor cache sentence survived list transform' || exit 1
   grep -Fq '5. Subsequent numbered-list item must survive unchanged.' "$transformed" || fail 'transform consumed item 5' || exit 1
   grep -Fq 'Following cache prose must survive unchanged.' "$transformed" || fail 'transform consumed following cache prose' || exit 1
@@ -317,18 +320,18 @@ test_human_clarification_without_runtime_dispatch() (
   load_overlay "$home" "$backups"
   printf '%s\n' "$ANCHOR_ITEM3" > "$list"
   rubric_transform_list < "$list" > "$output" || fail 'list clarification transform refused its anchor' || exit 1
-  grep -Fq 'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' "$output" || fail 'list/OpenCode does not stop for human clarification' || exit 1
+  grep -Fq 'MUST stop apply/verify for human clarification' "$output" || fail 'list/OpenCode does not stop for human clarification' || exit 1
   grep -Fq 'do not fabricate runtime recovery dispatch.' "$output" || fail 'list/OpenCode permits runtime recovery dispatch' || exit 1
   ! grep -Fq 'recovery_action=run ' "$output" || fail 'list/OpenCode fabricated a recovery command' || exit 1
 
   printf '%s\n' "$ANCHOR_PROSE" > "$prose"
   rubric_transform_prose < "$prose" > "$output" || fail 'Claude prose clarification transform refused its anchor' || exit 1
-  grep -Fq 'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' "$output" || fail 'Claude prose does not stop for human clarification' || exit 1
+  grep -Fq 'MUST stop apply/verify for human clarification' "$output" || fail 'Claude prose does not stop for human clarification' || exit 1
   ! grep -Fq 'recovery_action=run ' "$output" || fail 'Claude prose fabricated a recovery command' || exit 1
 
   write_pi_workflow_220_fixture > "$workflow"
   pi_rubric_workflow_transform < "$workflow" > "$output" || fail 'Pi clarification transform refused its workflow fixture' || exit 1
-  grep -Fq 'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' "$output" || fail 'Pi workflow does not stop for human clarification' || exit 1
+  grep -Fq 'MUST stop apply/verify for human clarification' "$output" || fail 'Pi workflow does not stop for human clarification' || exit 1
   ! grep -Fq 'recovery_action=run ' "$output" || fail 'Pi workflow fabricated a recovery command' || exit 1
 )
 
@@ -446,10 +449,13 @@ PI_GIT_WORKFLOW_REL="$PI_GIT_PACKAGE_ROOT_REL/assets/sdd-orchestrator-workflow.m
 PI_NPM_WORKFLOW_REL="$PI_NPM_PACKAGE_ROOT_REL/assets/sdd-orchestrator-workflow.md"
 PI_GIT_INIT_REL="$PI_GIT_PACKAGE_ROOT_REL/assets/agents/sdd-init.md"
 PI_NPM_INIT_REL="$PI_NPM_PACKAGE_ROOT_REL/assets/agents/sdd-init.md"
+PI_GIT_GENTLE_INIT_REL="$PI_GIT_PACKAGE_ROOT_REL/assets/agents/gentle-init.md"
+PI_NPM_GENTLE_INIT_REL="$PI_NPM_PACKAGE_ROOT_REL/assets/agents/gentle-init.md"
 PI_NPM_DELEGATION_REL="$PI_NPM_PACKAGE_ROOT_REL/assets/orchestrator-delegation.md"
 PI_WORKFLOW_PLACEHOLDER='@pi-gentle-pi-workflow@'
 PI_DELEGATION_PLACEHOLDER='@pi-gentle-pi-delegation@'
 PI_SDD_INIT_PLACEHOLDER='@pi-gentle-pi-sdd-init@'
+PI_GENTLE_INIT_PLACEHOLDER='@pi-gentle-pi-gentle-init@'
 
 prepare_pi_package_home() {
   local home="$1"
@@ -485,7 +491,7 @@ write_pi_package_settings() {
 prepare_no_jq_path() {
   local bin="$1" node_bin="$2" tool target
   mkdir -p "$bin"
-  for tool in awk basename bash cat cmp cp cut date dirname env grep head mkdir mktemp mv rm sed stat; do
+  for tool in awk basename bash cat chmod cmp cp cut date dirname env grep head mkdir mktemp mv rm sed stat; do
     target="$(command -v "$tool")" || return 1
     ln -s "$target" "$bin/$tool" || return 1
   done
@@ -539,7 +545,7 @@ assert_pi_framed_source_fails_closed_before_writes() {
 }
 
 test_pi_git_only_layout() (
-  local home="$TMP_ROOT/pi-git-only-home" backups="$TMP_ROOT/pi-git-only-backups" workflow init
+  local home="$TMP_ROOT/pi-git-only-home" backups="$TMP_ROOT/pi-git-only-backups" workflow init gentle
   mkdir -p "$home/.gentle-ai"
   printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
   write_pi_workflow_at "$home/$PI_GIT_WORKFLOW_REL"
@@ -548,22 +554,25 @@ test_pi_git_only_layout() (
   load_overlay "$home" "$backups"
   workflow="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'git-only Pi workflow did not resolve' || exit 1
   init="$(resolve_target_rel pi "$PI_SDD_INIT_PLACEHOLDER")" || fail 'git-only Pi sdd-init did not resolve' || exit 1
+  gentle="$(resolve_target_rel pi "$PI_GENTLE_INIT_PLACEHOLDER")" || fail 'git-only Pi gentle-init did not resolve' || exit 1
   [ "$workflow" = "$PI_GIT_WORKFLOW_REL" ] || fail "git-only Pi workflow resolved $workflow" || exit 1
   [ "$init" = "$PI_GIT_INIT_REL" ] || fail "git-only Pi sdd-init resolved $init" || exit 1
-  host_rows | grep -Fqx "pi|pi-rubric-workflow|$PI_WORKFLOW_PLACEHOLDER" || fail 'Pi workflow row is not resolver-backed' || exit 1
-  host_rows | grep -Fqx "pi|sdd-init-pi|$PI_SDD_INIT_PLACEHOLDER" || fail 'Pi sdd-init row is not resolver-backed' || exit 1
+  [ "$gentle" = "$PI_GIT_GENTLE_INIT_REL" ] || fail "git-only Pi gentle-init resolved $gentle" || exit 1
+  host_rows | grep -Fqx "pi|pi-gentle-init-transaction|$PI_GENTLE_INIT_PLACEHOLDER" || fail 'Pi grouped transaction row is not resolver-backed' || exit 1
 )
 
 test_pi_npm_only_layout() (
-  local home="$TMP_ROOT/pi-npm-only-home" backups="$TMP_ROOT/pi-npm-only-backups" workflow init
+  local home="$TMP_ROOT/pi-npm-only-home" backups="$TMP_ROOT/pi-npm-only-backups" workflow init gentle
   prepare_pi_package_home "$home"
   write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
 
   load_overlay "$home" "$backups"
   workflow="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'npm-only Pi workflow did not resolve' || exit 1
   init="$(resolve_target_rel pi "$PI_SDD_INIT_PLACEHOLDER")" || fail 'npm-only Pi sdd-init did not resolve' || exit 1
+  gentle="$(resolve_target_rel pi "$PI_GENTLE_INIT_PLACEHOLDER")" || fail 'npm-only Pi gentle-init did not resolve' || exit 1
   [ "$workflow" = "$PI_NPM_WORKFLOW_REL" ] || fail "npm-only Pi workflow resolved $workflow" || exit 1
   [ "$init" = "$PI_NPM_INIT_REL" ] || fail "npm-only Pi sdd-init resolved $init" || exit 1
+  [ "$gentle" = "$PI_NPM_GENTLE_INIT_REL" ] || fail "npm-only Pi gentle-init resolved $gentle" || exit 1
 )
 
 test_pi_both_layouts_git_configured() (
@@ -600,11 +609,12 @@ test_pi_both_layouts_npm_configured() (
 
 test_pi_final_240_npm_dual_assets() (
   local home="$TMP_ROOT/pi-final-240-home" backups="$TMP_ROOT/pi-final-240-backups" output rc
-  local npm_workflow npm_init git_workflow git_init git_workflow_before git_init_before
+  local npm_workflow npm_init git_workflow git_init npm_workflow_before git_workflow_before git_init_before
   npm_workflow="$home/$PI_NPM_WORKFLOW_REL"
   npm_init="$home/$PI_NPM_INIT_REL"
   git_workflow="$home/$PI_GIT_WORKFLOW_REL"
   git_init="$home/$PI_GIT_INIT_REL"
+  npm_workflow_before="$TMP_ROOT/pi-final-240-npm-workflow-before.md"
   git_workflow_before="$TMP_ROOT/pi-final-240-git-workflow-before.md"
   git_init_before="$TMP_ROOT/pi-final-240-git-init-before.md"
   output="$TMP_ROOT/pi-final-240-output.txt"
@@ -613,15 +623,17 @@ test_pi_final_240_npm_dual_assets() (
   write_pi_workflow_at "$git_workflow"
   write_pi_init_at "$git_init"
   write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@2.4.0"]}'
+  cp -- "$npm_workflow" "$npm_workflow_before"
   cp -- "$git_workflow" "$git_workflow_before"
   cp -- "$git_init" "$git_init_before"
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
   rc=$?
-  [ "$rc" -eq 2 ] || fail "final gentle-pi 2.4.0 npm dual-asset check returned $rc" || exit 1
+  [ "$rc" -eq 0 ] || fail "current gentle-pi 2.4.0 Pi assets must remain byte-identical without gentle-init capability, got $rc" || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
-  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$npm_workflow" || fail 'final gentle-pi 2.4.0 npm workflow was not transformed' || exit 1
-  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$npm_init" || fail 'final gentle-pi 2.4.0 npm sdd-init asset was not transformed' || exit 1
+  cmp -s "$npm_workflow" "$npm_workflow_before" || fail 'current gentle-pi 2.4.0 changed its selected workflow consumer' || exit 1
+  grep -Fq 'n/a            pi-gentle-init' "$output" || fail 'final gentle-pi 2.4.0 did not report unsupported gentle-init capability' || exit 1
+  ! grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$npm_init" || fail 'final gentle-pi 2.4.0 unexpectedly changed legacy sdd-init' || exit 1
   cmp -s "$git_workflow" "$git_workflow_before" || fail 'final gentle-pi 2.4.0 npm selection changed stale git workflow' || exit 1
   cmp -s "$git_init" "$git_init_before" || fail 'final gentle-pi 2.4.0 npm selection changed stale git sdd-init asset' || exit 1
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
@@ -918,6 +930,7 @@ test_pi_selected_missing_path_does_not_fallback() (
   prepare_pi_package_home "$home"
   mkdir -p "$git_root/assets"
   write_pi_init_at "$home/$PI_GIT_INIT_REL"
+  write_pi_gentle_init_stock > "$home/$PI_GIT_GENTLE_INIT_REL"
   write_pi_workflow_at "$npm_workflow"
   write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
   cp -- "$npm_workflow" "$npm_before"
@@ -926,7 +939,7 @@ test_pi_selected_missing_path_does_not_fallback() (
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
   rc=$?
   [ "$rc" -eq 1 ] || fail "selected-missing Pi source returned $rc" || exit 1
-  awk -v path="$PI_GIT_WORKFLOW_REL" '$1 == "MISSING-FILE" && $2 == "pi-rubric-workflow" && $3 == path { found = 1 } END { exit !found }' "$output" || fail 'selected missing git workflow was not reported' || exit 1
+  grep -Fq 'UNSAFE-TARGET  pi-gentle-init' "$output" || fail 'selected missing git workflow was not reported by the grouped preflight' || exit 1
   cmp -s "$npm_workflow" "$npm_before" || fail 'selected missing git source fell back to npm workflow' || exit 1
   cmp -s "$npm_init" "$npm_init_before" || fail 'selected missing git workflow fell back to npm sdd-init' || exit 1
   [ ! -e "$backups" ] || fail 'selected missing path created backups before writes' || exit 1
@@ -947,6 +960,8 @@ test_pi_selected_missing_sdd_init_does_not_fallback() (
   apply_output="$TMP_ROOT/pi-selected-missing-init-apply-output.txt"
   prepare_pi_package_home "$home"
   write_pi_workflow_at "$git_workflow"
+  mkdir -p "$(dirname -- "$home/$PI_GIT_GENTLE_INIT_REL")"
+  write_pi_gentle_init_stock > "$home/$PI_GIT_GENTLE_INIT_REL"
   write_pi_workflow_at "$npm_workflow"
   printf '%s\n' 'installer-owned Pi APPEND' > "$append"
   write_pi_package_settings "$home" '{"packages":["git:github.com/Gentleman-Programming/gentle-pi@4a71fd"]}'
@@ -957,8 +972,8 @@ test_pi_selected_missing_sdd_init_does_not_fallback() (
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
   rc=$?
-  [ "$rc" -eq 1 ] || fail "selected missing Pi sdd-init check returned $rc" || exit 1
-  awk -v path="$PI_GIT_INIT_REL" '$1 == "MISSING-FILE" && $2 == "sdd-init-pi" && $3 == path { found = 1 } END { exit !found }' "$output" || fail 'selected missing git sdd-init was not reported' || exit 1
+  [ "$rc" -eq 1 ] || fail "selected missing Pi legacy target check returned $rc" || exit 1
+  grep -Fq 'UNSAFE-TARGET  pi-gentle-init' "$output" || fail 'selected missing git legacy target was not reported by the grouped preflight' || exit 1
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
   rc=$?
@@ -986,6 +1001,8 @@ test_pi_selected_unsafe_sdd_init_blocks_preflight() (
   apply_output="$TMP_ROOT/pi-selected-unsafe-init-apply-output.txt"
   prepare_pi_package_home "$home"
   write_pi_workflow_at "$git_workflow"
+  mkdir -p "$(dirname -- "$home/$PI_GIT_GENTLE_INIT_REL")"
+  write_pi_gentle_init_stock > "$home/$PI_GIT_GENTLE_INIT_REL"
   write_pi_workflow_at "$npm_workflow"
   mkdir -p "$(dirname -- "$git_init")"
   printf '%s\n' 'outside sdd-init target' > "$outside"
@@ -999,8 +1016,8 @@ test_pi_selected_unsafe_sdd_init_blocks_preflight() (
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
   rc=$?
-  [ "$rc" -eq 1 ] || fail "unsafe selected Pi sdd-init check returned $rc" || exit 1
-  awk -v path="$PI_GIT_INIT_REL" '$1 == "UNSAFE-TARGET" && $2 == "sdd-init-pi" && $3 == path { found = 1 } END { exit !found }' "$output" || fail 'unsafe selected git sdd-init was not reported' || exit 1
+  [ "$rc" -eq 1 ] || fail "unsafe selected Pi legacy target check returned $rc" || exit 1
+  grep -Fq 'UNSAFE-TARGET  pi-gentle-init' "$output" || fail 'unsafe selected git legacy target was not reported by the grouped preflight' || exit 1
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$apply_output" 2>&1
   rc=$?
@@ -1106,6 +1123,21 @@ test_pi_local_path_identity_fails_closed_before_fallback() (
   [ ! -e "$backups" ] || fail 'unsupported gentle-pi path source apply created backups' || exit 1
 )
 
+test_pi_local_home_path_source_selects_root() (
+  local home="$TMP_ROOT/pi-local-home-source-home" backups="$TMP_ROOT/pi-local-home-source-backups" root rel actual
+  home="$TMP_ROOT/pi-local-home-source-home"
+  rel='.pi/agent/local-packages/gentle-pi'
+  root="$home/$rel"
+  write_pi_workflow_at "$root/assets/sdd-orchestrator-workflow.md"
+  write_pi_init_at "$root/assets/agents/sdd-init.md"
+  for prefix in path file; do
+    write_pi_package_settings "$home" "{\"packages\":[\"$prefix:$root\"]}"
+    load_overlay "$home" "$backups"
+    actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail "$prefix local HOME source did not resolve" || exit 1
+    [ "$actual" = "$rel/assets/sdd-orchestrator-workflow.md" ] || fail "$prefix local HOME source selected $actual" || exit 1
+  done
+)
+
 test_pi_unrelated_helper_does_not_block_unique_npm_layout() (
   local home="$TMP_ROOT/pi-helper-home" backups="$TMP_ROOT/pi-helper-backups" actual
   prepare_pi_package_home "$home"
@@ -1140,9 +1172,10 @@ test_pi_canonical_github_forms_select_git() (
 
 test_pi_workflow_rubric_forwarding_contract() (
   local home="$TMP_ROOT/pi-workflow-home" backups="$TMP_ROOT/pi-workflow-backups" stale_backups="$TMP_ROOT/pi-workflow-stale-backups"
-  local append init_file workflow before_append before_workflow expected output after_first stale stale_before
+  local append init_file gentle_file workflow before_append before_workflow expected output after_first stale stale_before
   append="$home/.pi/agent/APPEND_SYSTEM.md"
   init_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md"
+  gentle_file="$home/.pi/agent/npm/node_modules/gentle-pi/assets/agents/gentle-init.md"
   workflow="$home/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md"
   before_append="$TMP_ROOT/pi-workflow-append-before.md"
   before_workflow="$TMP_ROOT/pi-workflow-before.md"
@@ -1154,14 +1187,15 @@ test_pi_workflow_rubric_forwarding_contract() (
   mkdir -p "$home/.gentle-ai" "$(dirname -- "$append")" "$(dirname -- "$init_file")" "$(dirname -- "$workflow")"
   printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
   printf '%s\n' '<!-- installer-owned Pi APPEND -->' 'do not modify' > "$append"
-  write_pi_init_stock > "$init_file"
+  load_overlay "$home" "$backups"
+  write_pi_init_stock | init_rubric_transform pi > "$init_file"
+  write_pi_gentle_init_stock > "$gentle_file"
   write_pi_workflow_220_fixture > "$workflow"
   cp -- "$append" "$before_append"
   cp -- "$workflow" "$before_workflow"
 
   load_overlay "$home" "$backups"
-  host_rows | grep -Fqx "pi|sdd-init-pi|$PI_SDD_INIT_PLACEHOLDER" || fail 'Pi packaged sdd-init asset row is not resolver-backed' || exit 1
-  host_rows | grep -Fqx "pi|pi-rubric-workflow|$PI_WORKFLOW_PLACEHOLDER" || fail 'Pi package workflow placeholder row is missing' || exit 1
+  host_rows | grep -Fqx "pi|pi-gentle-init-transaction|$PI_GENTLE_INIT_PLACEHOLDER" || fail 'Pi grouped transaction row is not resolver-backed' || exit 1
   if host_rows | grep -Fq '.pi/agent/APPEND_SYSTEM.md'; then
     fail 'Pi APPEND_SYSTEM.md is mapped' || exit 1
   fi
@@ -1179,25 +1213,22 @@ test_pi_workflow_rubric_forwarding_contract() (
   cmp -s "$before_workflow" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" || fail 'Pi workflow backup is not the original asset' || exit 1
   cmp -s "$append" "$before_append" || fail 'Pi APPEND changed during workflow apply' || exit 1
   [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND was backed up during workflow apply' || exit 1
-  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$init_file" || fail 'Pi sdd-init was not still processed' || exit 1
+  grep -Fq '<!-- gentle-ai:gentle-init-rubric -->' "$gentle_file" || fail 'Pi gentle-init was not processed' || exit 1
+  ! grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$init_file" || fail 'Pi historical sdd-init marker was not retired' || exit 1
 
   for golden in \
-    'canonical `sdd-init` authoritative policy directly for the active artifact store' \
-    'active/authoritative' \
-    'caches the canonical policy ONCE per session' \
-    'resolve every distinct apply/verify work slice AFRESH using its own declared task intent and the policy-defined matching rules' \
+    'Resolve `gentle-init/{project}` first.' \
+    'Only when that new authority is absent, resolve the legacy `sdd-init/{project}` authority.' \
+    'Once `gentle-init/{project}` exists, never read, compare, or consult the legacy authority.' \
+    'resolve every distinct slice AFRESH from its declared task intent and declared matching rules' \
     '`default` ONLY when no non-default row matches' \
-    'Policy-defined matching, precedence, and exceptions govern each slice.' \
-    'If the canonical policy explicitly declares `all-rows` with `strictest-wins` and evidence union, use that declared resolution; otherwise use its declared resolution.' \
+    'use `all-rows`, `strictest-wins`, and evidence union only when the policy declares them.' \
     "Forward the effective MODE and the policy's exact declared commands, disciplines/evidence, and skill paths" \
     'without substituting downstream matching rules or policy rewriting' \
-    'Consumer-envelope or compiler diagnostics MUST NOT supersede a valid canonical policy' \
-    'Producer and activation semantics remain owned by `sdd-init`' \
-    'Missing, ambiguous, or conflicting canonical policy MUST stop apply/verify for human clarification' \
-    'Binary `strict_tdd` fallback is permitted ONLY when no rubric exists.' \
+    'The Pi parent owns producer and activation handling; `gentle-init` is a candidate author only.' \
+    'Binary `strict_tdd` fallback is permitted ONLY when no approved rubric exists.' \
     'effective MODE is `strict-tdd`' \
-    'The orchestrator is read-only: never author, generate, mutate, broaden, infer, alter, or rewrite the authoritative policy' \
-    'It may mechanically match existing policy rows using only those declared rules and must never invent commands or evidence.'; do
+    'This consumer is read-only'; do
     grep -Fq "$golden" "$workflow" || fail "Pi semantic golden is missing: $golden" || exit 1
   done
   for obsolete in RubricConsumerEnvelopeV1 RubricConsumerBlockedV1 'canonical-model digest' 'state gate' 'Resolve it ONCE per session' 'recovery_action=run '; do
@@ -1213,21 +1244,23 @@ test_pi_workflow_rubric_forwarding_contract() (
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
   cmp -s "$workflow" "$after_first" || fail 'second Pi workflow apply was not byte-idempotent' || exit 1
 
-  sed 's/resolve every distinct apply\/verify work slice AFRESH/resolve stale work slice/' "$workflow" > "$stale"
+  sed 's/resolve every distinct slice AFRESH/resolve stale work slice/' "$workflow" > "$stale"
   cp -- "$stale" "$workflow"
   cp -- "$workflow" "$stale_before"
-  HOME="$home" GENTLE_AI_BACKUP_ROOT="$stale_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
-  cmp -s "$workflow" "$expected" || fail 'Pi stale marker body was not canonically refreshed' || exit 1
-  cmp -s "$stale_before" "$stale_backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" || fail 'Pi stale workflow backup is not the stale original' || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$stale_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+  [ "$?" -eq 1 ] || fail 'Pi custom complete workflow marker was not refused' || exit 1
+  cmp -s "$workflow" "$stale_before" || fail 'Pi custom complete workflow marker was overwritten' || exit 1
+  [ ! -e "$stale_backups" ] || fail 'Pi custom complete workflow marker created a backup' || exit 1
 )
 
 test_pi_odd_forwarding_contract() (
       local home="$TMP_ROOT/pi-odd-home" backups="$TMP_ROOT/pi-odd-backups" stale_backups="$TMP_ROOT/pi-odd-stale-backups"
-      local append init_file workflow delegation before_append before_delegation expected output after_first stale_before preserved
+      local append init_file gentle_file workflow delegation before_append before_delegation expected output after_first stale_before preserved custom_backups
       local old_home="$TMP_ROOT/pi-odd-old-home" old_backups="$TMP_ROOT/pi-odd-old-backups" old_output="$TMP_ROOT/pi-odd-old-output.txt"
       local refusal_home="$TMP_ROOT/pi-odd-refusal-home" refusal_backups="$TMP_ROOT/pi-odd-refusal-backups" file before name
       append="$home/.pi/agent/APPEND_SYSTEM.md"
       init_file="$home/$PI_NPM_INIT_REL"
+      gentle_file="$home/$PI_NPM_GENTLE_INIT_REL"
       workflow="$home/$PI_NPM_WORKFLOW_REL"
       delegation="$home/$PI_NPM_DELEGATION_REL"
       before_append="$TMP_ROOT/pi-odd-append-before.md"
@@ -1240,6 +1273,7 @@ test_pi_odd_forwarding_contract() (
       printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
       printf '%s\n' '<!-- installer-owned Pi APPEND -->' 'do not modify' > "$append"
       write_pi_init_stock > "$init_file"
+      write_pi_gentle_init_stock > "$gentle_file"
       write_pi_workflow_220_fixture > "$workflow"
       write_pi_delegation_310_fixture > "$delegation"
       write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@3.1.0"]}'
@@ -1247,7 +1281,7 @@ test_pi_odd_forwarding_contract() (
       cp -- "$delegation" "$before_delegation"
 
       load_overlay "$home" "$backups"
-      host_rows | grep -Fqx "pi|pi-odd-forwarding|$PI_DELEGATION_PLACEHOLDER" || fail 'Pi ODD delegation row is not resolver-backed' || exit 1
+      host_rows | grep -Fqx "pi|pi-gentle-init-transaction|$PI_GENTLE_INIT_PLACEHOLDER" || fail 'Pi grouped transaction row is not resolver-backed' || exit 1
       [ "$(resolve_target_rel pi "$PI_DELEGATION_PLACEHOLDER")" = "$PI_NPM_DELEGATION_REL" ] || fail 'Pi ODD delegation did not resolve the configured package root' || exit 1
       pi_odd_forwarding_transform < "$delegation" > "$expected" || fail 'released ODD fixture was refused' || exit 1
       grep -Fqx '<!-- gentle-ai:pi-odd-forwarding -->' "$expected" || fail 'Pi ODD opening marker is missing' || exit 1
@@ -1256,7 +1290,7 @@ test_pi_odd_forwarding_contract() (
 
       HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"
       [ "$?" -eq 2 ] || fail 'Pi ODD --check did not report pending work' || exit 1
-      grep -Fq 'PENDING        odd-rubric' "$output" || fail 'Pi ODD --check did not report its pending package asset' || exit 1
+      grep -Fq 'PENDING        pi-gentle-init' "$output" || fail 'Pi ODD --check did not report the grouped package migration' || exit 1
       cmp -s "$delegation" "$before_delegation" || fail 'Pi ODD --check changed the package asset' || exit 1
       cmp -s "$append" "$before_append" || fail 'Pi APPEND changed during ODD --check' || exit 1
       [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md" ] || fail 'Pi ODD --check created a backup' || exit 1
@@ -1267,26 +1301,41 @@ test_pi_odd_forwarding_contract() (
       cmp -s "$before_delegation" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md" || fail 'Pi ODD backup is not the original asset' || exit 1
       cmp -s "$append" "$before_append" || fail 'Pi APPEND changed during ODD apply' || exit 1
       [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND was backed up during ODD apply' || exit 1
-      grep -Fq 'This is a parent-only ODD forwarding instruction.' "$delegation" || fail 'Pi ODD parent-only contract is missing' || exit 1
+      grep -Fq 'This is a parent-only, read-only ODD forwarding instruction.' "$delegation" || fail 'Pi ODD parent-only contract is missing' || exit 1
       # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
-      grep -Fq 'do not invoke `sdd-init` to resolve ODD TDD.' "$delegation" || fail 'Pi ODD contract introduced an init requirement' || exit 1
+      grep -Fq 'resolve the legacy `sdd-init/{project}` authority only when the new authority is absent.' "$delegation" || fail 'Pi ODD lacks absent-only legacy fallback' || exit 1
       # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
-      grep -Fq '`strict-tdd` means a full test-first cycle and maps native binary test-first activation to enabled.' "$delegation" || fail 'Pi ODD strict-tdd contract is missing' || exit 1
+      grep -Fq '`strict-tdd` requires observed RED, GREEN, TRIANGULATE, and REFACTOR and enables native test-first activation.' "$delegation" || fail 'Pi ODD strict-tdd contract is missing' || exit 1
       # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
-      grep -Fq '`standard` requires declared evidence without mandatory test-first ordering and maps that binary activation to disabled while preserving every applicable check and evidence obligation.' "$delegation" || fail 'Pi ODD standard-mode contract is missing' || exit 1
+      grep -Fq '`standard` requires declared evidence without mandatory test-first ordering and disables native test-first activation while preserving applicable evidence and ordinary validation.' "$delegation" || fail 'Pi ODD standard-mode contract is missing' || exit 1
       # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
-      grep -Fq '`skip` has no automated test gate unless applicable rows union evidence; it maps test-first activation to disabled while preserving that union and native ordinary validation.' "$delegation" || fail 'Pi ODD skip-mode contract is missing' || exit 1
-      grep -Fq 'For every supported resolved row, forward native ODD inputs: test-first activation, canonical source, and exact runner.' "$delegation" || fail 'Pi ODD native-input contract is missing' || exit 1
-      # shellcheck disable=SC2016 # Literal Markdown assertion must retain backticks without expansion.
-      grep -Fq 'The exact runner is the one declared applicable test-first command for `strict-tdd`, and `not-applicable` for `standard` or `skip` rather than an invented command.' "$delegation" || fail 'Pi ODD runner contract is missing' || exit 1
+      grep -Fq '`skip` has no automated test gate unless applicable rows declare unioned evidence; it disables native test-first activation while preserving applicable evidence and ordinary validation.' "$delegation" || fail 'Pi ODD skip-mode contract is missing' || exit 1
+      grep -Fq 'Binary test-first activation represents sequencing only' "$delegation" || fail 'Pi ODD sequencing boundary is missing' || exit 1
       grep -Fq 'This prompt delivery does not prove autonomous worker compliance.' "$delegation" || fail 'Pi ODD prompt-delivery limit is missing' || exit 1
 
       if ! HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output"; then
         fail 'Pi ODD clean --check did not return 0' || exit 1
       fi
-      cp -- "$delegation" "$after_first"
+      mkdir "$after_first"
+      cp -- "$gentle_file" "$init_file" "$workflow" "$delegation" "$after_first"
       HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
-      cmp -s "$delegation" "$after_first" || fail 'second Pi ODD apply was not byte-idempotent' || exit 1
+      for file in "$gentle_file" "$init_file" "$workflow" "$delegation"; do
+        cmp -s "$file" "$after_first/$(basename -- "$file")" || fail 'second Pi ODD apply was not byte-idempotent' || exit 1
+      done
+
+      awk '$0 == "<!-- /gentle-ai:gentle-init-rubric -->" { print "custom line" } { print }' "$gentle_file" > "$TMP_ROOT/pi-gentle-custom.md"
+      cp -- "$TMP_ROOT/pi-gentle-custom.md" "$gentle_file"
+      custom_backups="$TMP_ROOT/pi-gentle-custom-backups"
+      for check in 1 0; do
+        if [ "$check" -eq 1 ]; then HOME="$home" GENTLE_AI_BACKUP_ROOT="$custom_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+        else HOME="$home" GENTLE_AI_BACKUP_ROOT="$custom_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1; fi
+        [ "$?" -eq 1 ] || fail 'custom gentle-init marker was not refused' || exit 1
+        cmp -s "$gentle_file" "$TMP_ROOT/pi-gentle-custom.md" || fail 'custom gentle-init marker was overwritten' || exit 1
+        for file in "$init_file" "$workflow" "$delegation"; do
+          cmp -s "$file" "$after_first/$(basename -- "$file")" || fail 'custom gentle-init refusal changed a package sibling' || exit 1
+        done
+        [ ! -e "$custom_backups" ] || fail 'custom gentle-init marker created a backup' || exit 1
+      done
 
       preserved="$TMP_ROOT/pi-odd-preserved.md"
       awk '$0 == "<!-- /gentle-ai:pi-odd-forwarding -->" { print; print "unmanaged separator text"; next } { print }' "$delegation" > "$preserved"
@@ -1294,14 +1343,15 @@ test_pi_odd_forwarding_contract() (
       load_overlay "$home" "$TMP_ROOT/pi-odd-preserved-backups"
       expect_rc 1 odd_forwarding_apply "$delegation" || exit 1
       awk '/^<!-- gentle-ai:pi-odd-forwarding -->$/{marker=NR} /^unmanaged separator text$/{text=NR} END {exit !(marker && text && marker < text)}' "$delegation" || fail 'Pi ODD refresh moved unmanaged text across its marker' || exit 1
-      cp -- "$after_first" "$delegation"
+      cp -- "$after_first/$(basename -- "$delegation")" "$delegation"
 
-      sed 's/This is a parent-only ODD forwarding instruction./Stale ODD forwarding instruction./' "$delegation" > "$TMP_ROOT/pi-odd-stale.md"
+      sed 's/This is a parent-only, read-only ODD forwarding instruction./Stale ODD forwarding instruction./' "$delegation" > "$TMP_ROOT/pi-odd-stale.md"
       cp -- "$TMP_ROOT/pi-odd-stale.md" "$delegation"
       cp -- "$delegation" "$stale_before"
-      HOME="$home" GENTLE_AI_BACKUP_ROOT="$stale_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" || exit 1
-      cmp -s "$delegation" "$expected" || fail 'Pi ODD stale marker body was not canonically refreshed' || exit 1
-      cmp -s "$stale_before" "$stale_backups/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md" || fail 'Pi ODD stale backup is not the stale original' || exit 1
+      HOME="$home" GENTLE_AI_BACKUP_ROOT="$stale_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+      [ "$?" -eq 1 ] || fail 'Pi custom complete ODD marker was not refused' || exit 1
+      cmp -s "$delegation" "$stale_before" || fail 'Pi custom complete ODD marker was overwritten' || exit 1
+      [ ! -e "$stale_backups" ] || fail 'Pi custom complete ODD marker created a backup' || exit 1
 
       mkdir -p "$old_home/.gentle-ai" "$(dirname -- "$old_home/$PI_NPM_INIT_REL")" "$(dirname -- "$old_home/$PI_NPM_WORKFLOW_REL")"
       printf '%s\n' '{"installed_agents":["pi"]}' > "$old_home/.gentle-ai/state.json"
@@ -1309,8 +1359,8 @@ test_pi_odd_forwarding_contract() (
       write_pi_workflow_220_fixture > "$old_home/$PI_NPM_WORKFLOW_REL"
       write_pi_package_settings "$old_home" '{"packages":["npm:gentle-pi@2.4.0"]}'
       HOME="$old_home" GENTLE_AI_BACKUP_ROOT="$old_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$old_output"
-      [ "$?" -eq 2 ] || fail 'old Pi package without ODD was declared broken' || exit 1
-      grep -Fq 'n/a            odd-rubric' "$old_output" || fail 'old Pi package without ODD was not reported n/a' || exit 1
+      [ "$?" -eq 0 ] || fail 'current Pi package without gentle-init capability was not a no-op' || exit 1
+      grep -Fq 'n/a            pi-gentle-init' "$old_output" || fail 'old Pi package without gentle-init capability was not reported n/a' || exit 1
       [ ! -e "$old_backups" ] || fail 'old Pi ODD absence created a backup' || exit 1
 
       mkdir -p "$refusal_home"
@@ -1496,7 +1546,7 @@ EOF
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check >/dev/null
   rc=$?
-  [ "$rc" -eq 2 ] || fail "expected --check pending rc 2, got $rc" || exit 1
+  [ "$rc" -eq 0 ] || fail "current Pi package must be a consumer no-op without gentle-init capability, got $rc" || exit 1
   cmp -s "$append" "$before" || fail 'Pi APPEND_SYSTEM.md changed during --check' || exit 1
   [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND_SYSTEM.md was backed up during --check' || exit 1
   [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" ] || fail '--check created an sdd-init backup' || exit 1
@@ -1505,9 +1555,10 @@ EOF
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" >/dev/null || exit 1
   cmp -s "$append" "$before" || fail 'Pi APPEND_SYSTEM.md changed during apply' || exit 1
   [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'Pi APPEND_SYSTEM.md was backed up during apply' || exit 1
-  grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$init_file" || fail 'Pi sdd-init mapping was not applied' || exit 1
-  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$workflow" || fail 'Pi workflow mapping was not applied' || exit 1
-  cmp -s "$workflow_before" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" || fail 'Pi workflow backup is not the original' || exit 1
+  ! grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$init_file" || fail 'current Pi package unexpectedly changed legacy sdd-init' || exit 1
+  ! grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$workflow" || fail 'current Pi package changed its workflow consumer' || exit 1
+  cmp -s "$workflow_before" "$workflow" || fail 'current Pi package changed workflow bytes' || exit 1
+  [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md" ] || fail 'current Pi package backed up unchanged workflow bytes' || exit 1
 
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check >/dev/null
   rc=$?
@@ -1572,8 +1623,7 @@ test_sdd_init_host_rows_cover_cursor_copilot_and_pi() (
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-skill|.copilot/skills/sdd-init/SKILL.md' || fail 'Copilot sdd-init skill row is missing' || exit 1
   host_rows | grep -Fqx 'vscode-copilot|sdd-init-details|.copilot/skills/sdd-init/references/init-details.md' || fail 'Copilot sdd-init details row is missing' || exit 1
   host_rows | grep -Fqx 'claude-code|persona-split-style|@claude-output-style@' || fail 'Claude selected style row is missing' || exit 1
-  host_rows | grep -Fqx "pi|sdd-init-pi|$PI_SDD_INIT_PLACEHOLDER" || fail 'Pi packaged sdd-init row is not resolver-backed' || exit 1
-  host_rows | grep -Fqx "pi|pi-rubric-workflow|$PI_WORKFLOW_PLACEHOLDER" || fail 'Pi workflow row is missing' || exit 1
+  host_rows | grep -Fqx "pi|pi-gentle-init-transaction|$PI_GENTLE_INIT_PLACEHOLDER" || fail 'Pi grouped transaction row is not resolver-backed' || exit 1
   host_rows | grep -Fqx 'opencode|sdd-init-delegation|.config/opencode/opencode.json' || fail 'OpenCode inline sdd-init delegation row is missing' || exit 1
 )
 
@@ -1727,6 +1777,34 @@ Pi executor instructions.
 
 Installer-owned persistence instructions.
 EOF
+}
+
+write_pi_gentle_init_stock() {
+  cat <<'EOF'
+---
+name: gentle-init
+---
+
+## Parent boundary
+
+Upstream candidate-author instructions.
+
+## Publication boundary
+
+Upstream parent-publisher instructions.
+EOF
+}
+
+# Historical pair-focused fixtures now exercise the public grouped migration
+# boundary. They create only the mandatory workflow sibling; ODD remains absent
+# so the optional-asset path is covered without reviving a pair API.
+pi_gentle_init_migration_apply() {
+  local gentle="$1" legacy="$2" root workflow delegation
+  root="$(dirname -- "$(dirname -- "$(dirname -- "$gentle")")")"
+  workflow="$root/assets/sdd-orchestrator-workflow.md"
+  delegation="$root/assets/orchestrator-delegation.md"
+  [ -e "$workflow" ] || write_pi_workflow_220_fixture > "$workflow"
+  pi_gentle_init_transaction_apply "$gentle" "$legacy" "$workflow" "$delegation"
 }
 
 write_claude_split_stock() {
@@ -1970,8 +2048,8 @@ test_fresh_260_active_layout_lifecycle() (
   cmp -s "$pi" "$pi_before" || fail 'fresh 2.6.0 apply changed Pi APPEND' || exit 1
   [ ! -e "$backups/.pi/agent/APPEND_SYSTEM.md" ] || fail 'fresh 2.6.0 apply backed up Pi APPEND' || exit 1
   grep -Fq '# Neutral Output Style' "$gentleman" || fail 'fresh 2.6.0 Claude style was not transformed' || exit 1
-  grep -Fq 'allowed_answers: strict|rubric' "$pi_init" || fail 'fresh 2.6.0 Pi executable asset was not transformed' || exit 1
-  grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$pi_workflow" || fail 'fresh 2.6.0 Pi package workflow was not transformed' || exit 1
+  ! grep -Fq '<!-- gentle-ai:sdd-init-rubric -->' "$pi_init" || fail 'fresh current Pi package unexpectedly changed legacy sdd-init' || exit 1
+  ! grep -Fq '<!-- gentle-ai:pi-rubric-forwarding -->' "$pi_workflow" || fail 'fresh current Pi package changed workflow before producer capability exists' || exit 1
   grep -Fq 'single writer of project TDD policy' "$opencode_skill" || fail 'fresh 2.6.0 OpenCode skill was not transformed' || exit 1
   [ ! -e "$home/.config/opencode/prompts/sdd/sdd-init.md" ] || fail 'fresh 2.6.0 layout manufactured an OpenCode prompt file' || exit 1
   load_overlay "$home" "$backups"
@@ -2022,7 +2100,7 @@ test_fresh_260_active_layout_lifecycle() (
   rm -f -- "$pi_init"
   HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check >/dev/null
   rc=$?
-  [ "$rc" -eq 1 ] || fail "missing Pi executable asset should block preflight, got rc $rc" || exit 1
+  [ "$rc" -eq 2 ] || fail "missing legacy Pi asset without gentle-init should leave unrelated pending work reportable, got rc $rc" || exit 1
 )
 
 expect_invalid_init_rubric_delta() {
@@ -2179,7 +2257,7 @@ test_managed_asset_diagnostic() (
   env -u APPLY_SH_LIB HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" > "$normal" || exit 1
   [ "$(grep -Fc 'managed-asset diagnostic' "$normal")" -eq 1 ] || fail 'normal apply emitted duplicate diagnostic output' || exit 1
   diagnostic_line="$(grep -n 'managed-asset diagnostic' "$normal" | cut -d: -f1)"
-  transform_line="$(grep -n 'sdd-init-rubric.*agents/sdd-init.md' "$normal" | cut -d: -f1)"
+  transform_line="$(grep -n 'pi-gentle-init.*assets/agents/gentle-init.md' "$normal" | cut -d: -f1)"
   [ "$diagnostic_line" -lt "$transform_line" ] || fail 'diagnostic did not precede overlay transform' || exit 1
   cmp -s "$source" "$before_source" || fail 'normal apply changed package diagnostic input' || exit 1
   cmp -s "$target" "$before_target" || fail 'normal apply changed installed diagnostic input' || exit 1
@@ -2493,7 +2571,7 @@ PY
       printf '\n' > "$home/.pi/agent/APPEND_SYSTEM.md"
       run_with_timeout env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" --check > "$output" 2> "$error"
       rc=$?
-      [ "$rc" -eq 2 ] || fail "FIFO package metadata check returned $rc" || exit 1
+      [ "$rc" -eq 0 ] || fail "FIFO package metadata current Pi no-op check returned $rc" || exit 1
       run_with_timeout env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" "$ROOT/apply.sh" > "$output" 2> "$error"
       rc=$?
       [ "$rc" -eq 0 ] || fail "FIFO package metadata apply returned $rc" || exit 1
@@ -2621,8 +2699,704 @@ test_init_rubric_refuses_ambiguous_or_partial_shapes() (
   [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" ] || fail 'refused target was backed up' || exit 1
 )
 
+test_pi_gentle_init_capability_and_transaction() (
+  local home="$TMP_ROOT/pi-gentle-init-home" backups="$TMP_ROOT/pi-gentle-init-backups"
+  local gentle="$home/$PI_NPM_GENTLE_INIT_REL" legacy="$home/$PI_NPM_INIT_REL" before_gentle before_legacy stripped output rc name
+  mkdir -p "$(dirname -- "$gentle")"
+  write_pi_gentle_init_stock > "$gentle"
+  write_pi_init_stock > "$legacy"
+  before_gentle="$TMP_ROOT/pi-gentle-init-before.md"
+  before_legacy="$TMP_ROOT/pi-gentle-legacy-before.md"
+  load_overlay "$home" "$backups"
+
+  # Future clean insertion preserves the complete upstream source outside the
+  # owned marker and leaves an unmarked legacy asset untouched.
+  cp -- "$gentle" "$before_gentle"
+  cp -- "$legacy" "$before_legacy"
+  expect_rc 0 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+  grep -Fqx '<!-- gentle-ai:gentle-init-rubric -->' "$gentle" || fail 'future gentle-init marker was not inserted' || exit 1
+  grep -Fqx '<!-- /gentle-ai:gentle-init-rubric -->' "$gentle" || fail 'future gentle-init marker close was not inserted' || exit 1
+  cmp -s "$legacy" "$before_legacy" || fail 'clean future migration changed an unmarked legacy target' || exit 1
+  stripped="$TMP_ROOT/pi-gentle-init-stripped.md"
+  awk '/^<!-- gentle-ai:gentle-init-rubric -->$/{drop=1; next} /^<!-- \/gentle-ai:gentle-init-rubric -->$/{drop=0; next} !drop {print}' "$gentle" > "$stripped"
+  cmp -s "$stripped" "$before_gentle" || fail 'future insertion changed bytes outside its marker' || exit 1
+  grep -Fq '## Parent boundary' "$stripped" || fail 'future insertion changed the upstream Parent boundary' || exit 1
+  grep -Fq '## Publication boundary' "$stripped" || fail 'future insertion changed the upstream Publication boundary' || exit 1
+  expect_rc 1 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+
+  # Exact historical Pi ownership migrates both targets in one transition.
+  write_pi_gentle_init_stock > "$gentle"
+  write_pi_init_stock | init_rubric_transform pi > "$legacy" || exit 1
+  load_overlay "$home" "$TMP_ROOT/pi-gentle-init-migration-backups"
+  cp -- "$gentle" "$before_gentle"
+  cp -- "$legacy" "$before_legacy"
+  expect_rc 0 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+  grep -Fq '<!-- gentle-ai:gentle-init-rubric -->' "$gentle" || fail 'legacy migration did not create future marker' || exit 1
+  ! grep -Fq 'gentle-ai:sdd-init-rubric' "$legacy" || fail 'legacy migration retained the historical marker' || exit 1
+  cmp -s "$before_gentle" "$BACKUP_ROOT/.pi/agent/npm/node_modules/gentle-pi/assets/agents/gentle-init.md" || fail 'future target backup missed its preimage' || exit 1
+  cmp -s "$before_legacy" "$BACKUP_ROOT/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" || fail 'legacy target backup missed its preimage' || exit 1
+  cp -- "$gentle" "$before_gentle"
+  cp -- "$legacy" "$before_legacy"
+  expect_rc 1 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+  cmp -s "$gentle" "$before_gentle" || fail 'second future migration changed gentle-init bytes' || exit 1
+  cmp -s "$legacy" "$before_legacy" || fail 'second future migration changed legacy bytes' || exit 1
+
+  # Every malformed or customized historical state refuses before either side.
+  for name in unknown partial duplicate; do
+    write_pi_gentle_init_stock > "$gentle"
+    case "$name" in
+      unknown) printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'custom payload' '<!-- /gentle-ai:sdd-init-rubric -->' > "$legacy" ;;
+      partial) printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'partial payload' > "$legacy" ;;
+      duplicate) { printf '%s\n' "$INIT_RUBRIC_PI" "$INIT_RUBRIC_PI"; } > "$legacy" ;;
+    esac
+    cp -- "$gentle" "$before_gentle"
+    cp -- "$legacy" "$before_legacy"
+    expect_rc 3 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+    cmp -s "$gentle" "$before_gentle" || fail "$name legacy refusal changed future target" || exit 1
+    cmp -s "$legacy" "$before_legacy" || fail "$name legacy refusal changed legacy target" || exit 1
+  done
+
+  for name in changed missing duplicate marker-partial marker-duplicate; do
+    case "$name" in
+      changed) printf '%s\n' '## Changed publication boundary' > "$gentle" ;;
+      missing) printf '%s\n' 'No publication boundary' > "$gentle" ;;
+      duplicate) { write_pi_gentle_init_stock; printf '%s\n' '## Publication boundary'; } > "$gentle" ;;
+      marker-partial) { write_pi_gentle_init_stock | awk '/^## Publication boundary$/{print "<!-- gentle-ai:gentle-init-rubric -->"} {print}'; } > "$gentle" ;;
+      marker-duplicate) { write_pi_gentle_init_stock | awk '/^## Publication boundary$/{print "<!-- gentle-ai:gentle-init-rubric -->"; print "<!-- /gentle-ai:gentle-init-rubric -->"; print "<!-- gentle-ai:gentle-init-rubric -->"; print "<!-- /gentle-ai:gentle-init-rubric -->"} {print}'; } > "$gentle" ;;
+    esac
+    write_pi_init_stock | init_rubric_transform pi > "$legacy" || exit 1
+    cp -- "$gentle" "$before_gentle"
+    cp -- "$legacy" "$before_legacy"
+    expect_rc 3 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+    cmp -s "$gentle" "$before_gentle" || fail "$name future-anchor refusal changed future target" || exit 1
+    cmp -s "$legacy" "$before_legacy" || fail "$name future-anchor refusal changed legacy target" || exit 1
+  done
+
+  write_pi_gentle_init_stock > "$gentle"
+  write_pi_init_stock > "$legacy"
+  cp -- "$gentle" "$before_gentle"
+  cp -- "$legacy" "$before_legacy"
+  BACKUP_ROOT="$TMP_ROOT/pi-gentle-init-check-backups"
+  CHECK_ONLY=1
+  expect_rc 0 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+  CHECK_ONLY=0
+  cmp -s "$gentle" "$before_gentle" || fail 'gentle-init --check changed its target' || exit 1
+  cmp -s "$legacy" "$before_legacy" || fail 'gentle-init --check changed its legacy target' || exit 1
+  [ ! -e "$TMP_ROOT/pi-gentle-init-check-backups" ] || fail 'gentle-init --check created a backup' || exit 1
+
+  printf '%s\n' 'outside target' > "$TMP_ROOT/pi-gentle-init-outside.md"
+  rm -f -- "$gentle"
+  ln -s "$TMP_ROOT/pi-gentle-init-outside.md" "$gentle"
+  expect_rc 4 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+  grep -Fqx 'outside target' "$TMP_ROOT/pi-gentle-init-outside.md" || fail 'unsafe gentle-init link target changed' || exit 1
+)
+
+test_pi_gentle_init_pair_failure_recovery() (
+  local name hook home backups root gentle legacy workflow output gentle_before legacy_before recovery
+
+  setup_pair_fixture() {
+    home="$TMP_ROOT/pi-pair-$name-home"
+    backups="$TMP_ROOT/pi-pair-$name-backups"
+    root="$home/$PI_NPM_PACKAGE_ROOT_REL"
+    gentle="$home/$PI_NPM_GENTLE_INIT_REL"
+    legacy="$home/$PI_NPM_INIT_REL"
+    workflow="$home/$PI_NPM_WORKFLOW_REL"
+    output="$TMP_ROOT/pi-pair-$name-output.txt"
+    mkdir -p "$home/.gentle-ai" "$(dirname -- "$gentle")"
+    printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+    load_overlay "$home" "$backups"
+    write_pi_gentle_init_stock > "$gentle"
+    write_pi_init_stock | init_rubric_transform pi > "$legacy" || return 1
+    write_pi_workflow_220_fixture | pi_rubric_workflow_transform > "$workflow" || return 1
+    write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@9.9.9"]}'
+    gentle_before="$TMP_ROOT/pi-pair-$name-gentle-before.md"
+    legacy_before="$TMP_ROOT/pi-pair-$name-legacy-before.md"
+    cp -- "$gentle" "$gentle_before"
+    cp -- "$legacy" "$legacy_before"
+  }
+
+  assert_no_candidate_temps() {
+    ! find "$(dirname -- "$gentle")" -maxdepth 1 -type f -name '.gentle-init.md.gentle-ai.??????' -print -quit | grep -q . ||
+      fail "$name leaked a gentle-init candidate temp" || return 1
+    ! find "$(dirname -- "$legacy")" -maxdepth 1 -type f -name '.sdd-init.md.gentle-ai.??????' -print -quit | grep -q . ||
+      fail "$name leaked an sdd-init candidate temp" || return 1
+  }
+
+  for name in backup-second rename-first rename-second rollback recovery-alloc; do
+    setup_pair_fixture || exit 1
+    case "$name" in
+      backup-second) hook='backup-sdd-init' ;;
+      rename-first) hook='rename-gentle-init' ;;
+      rename-second) hook='rename-sdd-init' ;;
+      rollback) hook='rename-sdd-init,rollback' ;;
+      recovery-alloc) hook='rename-sdd-init,recovery-alloc' ;;
+    esac
+    env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" GENTLE_AI_TEST_MODE=1 GENTLE_AI_TEST_PAIR_HOOK="$hook" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+    rc=$?
+    [ "$rc" -eq 1 ] || { cat "$output" >&2; fail "$name pair failure apply returned $rc instead of 1"; exit 1; }
+    assert_no_candidate_temps || exit 1
+    case "$name" in
+      backup-second)
+        grep -Fq 'WRITE-FAILED' "$output" || fail 'backup failure was not reported' || exit 1
+        cmp -s "$gentle" "$gentle_before" || fail 'backup failure changed future target' || exit 1
+        cmp -s "$legacy" "$legacy_before" || fail 'backup failure changed legacy target' || exit 1
+        cmp -s "$gentle_before" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/gentle-init.md" || fail 'backup failure did not retain first preimage' || exit 1
+        [ ! -e "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" ] || fail 'injected second backup failure created legacy backup' || exit 1
+        ;;
+      rename-first)
+        grep -Fq 'WRITE-FAILED' "$output" || fail 'first rename failure was not reported' || exit 1
+        cmp -s "$gentle" "$gentle_before" || fail 'first rename failure changed future target' || exit 1
+        cmp -s "$legacy" "$legacy_before" || fail 'first rename failure changed legacy target' || exit 1
+        ;;
+      rename-second)
+        grep -Fq 'WRITE-FAILED' "$output" || fail 'second rename rollback was not reported' || exit 1
+        cmp -s "$gentle" "$gentle_before" || fail 'second rename failure did not roll back future target' || exit 1
+        cmp -s "$legacy" "$legacy_before" || fail 'second rename failure changed legacy target' || exit 1
+        cmp -s "$gentle_before" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/gentle-init.md" || fail 'rollback did not retain future preimage backup' || exit 1
+        cmp -s "$legacy_before" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" || fail 'rollback did not retain legacy preimage backup' || exit 1
+        ! find "$(dirname -- "$gentle")" -maxdepth 1 -type f -name '.gentle-init.md.gentle-ai-recovery.*' -print -quit | grep -q . ||
+          fail 'successful rollback retained a recovery artifact' || exit 1
+        ;;
+      rollback)
+        grep -Fq 'RECOVERY-REQUIRED' "$output" || fail 'rollback failure was not reported as recoverable' || exit 1
+        ! cmp -s "$gentle" "$gentle_before" || fail 'injected rollback failure unexpectedly restored future target' || exit 1
+        cmp -s "$legacy" "$legacy_before" || fail 'rollback failure changed legacy target' || exit 1
+        cmp -s "$gentle_before" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/gentle-init.md" || fail 'rollback failure lacks future preimage backup' || exit 1
+        recovery="$(find "$(dirname -- "$gentle")" -maxdepth 1 -type f -name '.gentle-init.md.gentle-ai-recovery.*' -print -quit)"
+        [ -n "$recovery" ] || fail 'rollback failure did not retain a named recovery artifact' || exit 1
+        cmp -s "$recovery" "$gentle_before" || fail 'rollback recovery artifact is not the original future bytes' || exit 1
+        ;;
+      recovery-alloc)
+        grep -Fq 'RECOVERY-REQUIRED' "$output" || fail 'recovery allocation failure did not report recoverable backup-only state' || exit 1
+        ! cmp -s "$gentle" "$gentle_before" || fail 'recovery allocation failure unexpectedly restored future target' || exit 1
+        cmp -s "$legacy" "$legacy_before" || fail 'recovery allocation failure changed legacy target' || exit 1
+        cmp -s "$gentle_before" "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/gentle-init.md" || fail 'recovery allocation failure lacks future preimage backup' || exit 1
+        ! find "$(dirname -- "$gentle")" -maxdepth 1 -type f -name '.gentle-init.md.gentle-ai-recovery.*' -print -quit | grep -q . ||
+          fail 'recovery allocation failure claimed an artifact by leaving one' || exit 1
+        ;;
+    esac
+  done
+
+  name=gate-negative
+  setup_pair_fixture || exit 1
+  env HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" GENTLE_AI_TEST_PAIR_HOOK=rename-first APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+  [ "$?" -eq 0 ] || fail 'hook token without explicit test mode changed production behavior' || exit 1
+  grep -Fq 'applied        pi-gentle-init' "$output" || fail 'ungated hook did not permit normal grouped migration' || exit 1
+  ! cmp -s "$gentle" "$gentle_before" || fail 'ungated hook prevented future target migration' || exit 1
+)
+
+test_pi_gentle_init_missing_python_capability() (
+  local home="$TMP_ROOT/pi-missing-python-home" backups="$TMP_ROOT/pi-missing-python-backups" bin="$TMP_ROOT/pi-missing-python-bin"
+  local gentle="$home/$PI_NPM_GENTLE_INIT_REL" legacy="$home/$PI_NPM_INIT_REL" workflow="$home/$PI_NPM_WORKFLOW_REL" gentle_before legacy_before output
+  mkdir -p "$(dirname -- "$gentle")" "$home/.gentle-ai"
+  printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+  write_pi_gentle_init_stock > "$gentle"
+  load_overlay "$home" "$backups"
+  write_pi_init_stock | init_rubric_transform pi > "$legacy" || exit 1
+  write_pi_workflow_220_fixture | pi_rubric_workflow_transform > "$workflow" || exit 1
+  gentle_before="$TMP_ROOT/pi-missing-python-gentle-before.md"
+  legacy_before="$TMP_ROOT/pi-missing-python-legacy-before.md"
+  cp -- "$gentle" "$gentle_before"
+  cp -- "$legacy" "$legacy_before"
+  prepare_no_jq_path "$bin" '' || fail 'could not create no-python command path' || exit 1
+  PATH="$bin"
+  expect_rc 12 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+  cmp -s "$gentle" "$gentle_before" || fail 'missing python changed future target' || exit 1
+  cmp -s "$legacy" "$legacy_before" || fail 'missing python changed legacy target' || exit 1
+  [ ! -e "$backups" ] || fail 'missing python created a backup' || exit 1
+  output="$TMP_ROOT/pi-missing-python-output.txt"
+  PATH="$bin" HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  [ "$?" -eq 1 ] || fail 'missing python check did not return nonzero' || exit 1
+  grep -Fq 'MISSING-CAPABILITY' "$output" || fail 'missing python check did not report its capability outcome' || exit 1
+  grep -Fq 'byte-transform capability is unavailable' "$output" || fail 'missing python check did not report a clear final capability failure' || exit 1
+  cmp -s "$gentle" "$gentle_before" || fail 'missing python check changed future target' || exit 1
+  cmp -s "$legacy" "$legacy_before" || fail 'missing python check changed legacy target' || exit 1
+
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$bin/python3"
+  chmod 755 "$bin/python3"
+  expect_rc 12 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+  cmp -s "$gentle" "$gentle_before" || fail 'broken python changed future target' || exit 1
+  cmp -s "$legacy" "$legacy_before" || fail 'broken python changed legacy target' || exit 1
+)
+
+
+test_pi_gentle_init_byte_preservation() (
+  local home="$TMP_ROOT/pi-gentle-bytes-home" backups="$TMP_ROOT/pi-gentle-bytes-backups" gentle legacy before_gentle before_legacy expected
+  gentle="$home/$PI_NPM_GENTLE_INIT_REL"
+  legacy="$home/$PI_NPM_INIT_REL"
+  before_gentle="$TMP_ROOT/pi-gentle-bytes-gentle-before.md"
+  before_legacy="$TMP_ROOT/pi-gentle-bytes-legacy-before.md"
+  mkdir -p "$(dirname -- "$gentle")"
+  load_overlay "$home" "$backups"
+
+  printf '%s' $'upstream prefix\n## Publication boundary\npublisher without final newline' > "$gentle"
+  printf '%s' $'Pi executor instructions.\n\n' > "$legacy"
+  printf '%s\n\n' "$INIT_RUBRIC_PI" >> "$legacy"
+  printf '%s' $'## Memory Contract\nlegacy suffix without final newline' >> "$legacy"
+  cp -- "$gentle" "$before_gentle"
+  cp -- "$legacy" "$before_legacy"
+  expect_rc 0 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+  expected="$TMP_ROOT/pi-gentle-byte-expected.md"
+  { printf '%s\n' 'upstream prefix' "$GENTLE_INIT_RUBRIC_PI"; printf '%s' $'## Publication boundary\npublisher without final newline'; } > "$expected"
+  cmp -s "$gentle" "$expected" || fail 'future insertion did not preserve no-final-newline bytes' || exit 1
+  printf '%s' $'Pi executor instructions.\n\n## Memory Contract\nlegacy suffix without final newline' > "$expected"
+  cmp -s "$legacy" "$expected" || fail 'legacy retirement did not preserve no-final-newline bytes' || exit 1
+
+  # A whitespace-only separator is not overlay-owned and must not be deleted.
+  cp -- "$before_gentle" "$gentle"
+  printf '%s' $'Pi executor instructions.\n\n' > "$legacy"
+  printf '%s\n \n' "$INIT_RUBRIC_PI" >> "$legacy"
+  printf '%s' '## Memory Contract' >> "$legacy"
+  cp -- "$gentle" "$before_gentle"
+  cp -- "$legacy" "$before_legacy"
+  expect_rc 3 pi_gentle_init_migration_apply "$gentle" "$legacy" || exit 1
+  cmp -s "$gentle" "$before_gentle" || fail 'separator refusal changed future target' || exit 1
+  cmp -s "$legacy" "$before_legacy" || fail 'separator refusal deleted whitespace-only legacy bytes' || exit 1
+)
+
+test_pi_current_package_gentle_init_unsupported_noop() (
+  local home="$TMP_ROOT/pi-current-gentle-init-home" backups="$TMP_ROOT/pi-current-gentle-init-backups" root workflow delegation legacy output rc
+  root="$home/$PI_NPM_PACKAGE_ROOT_REL"
+  workflow="$home/$PI_NPM_WORKFLOW_REL"
+  delegation="$home/$PI_NPM_DELEGATION_REL"
+  legacy="$home/$PI_NPM_INIT_REL"
+  output="$TMP_ROOT/pi-current-gentle-init-output.txt"
+  mkdir -p "$home/.gentle-ai" "$(dirname -- "$workflow")" "$(dirname -- "$legacy")" "$(dirname -- "$delegation")"
+  printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+  load_overlay "$home" "$backups"
+  write_pi_workflow_220_fixture > "$workflow"
+  write_pi_delegation_310_fixture > "$delegation"
+  write_pi_init_stock | init_rubric_transform pi > "$legacy" || exit 1
+  cp -- "$workflow" "$TMP_ROOT/pi-current-gentle-init-workflow-before.md"
+  cp -- "$delegation" "$TMP_ROOT/pi-current-gentle-init-delegation-before.md"
+  cp -- "$legacy" "$TMP_ROOT/pi-current-gentle-init-legacy-before.md"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "current package gentle-init check returned $rc" || exit 1
+  grep -Fq 'n/a            pi-gentle-init' "$output" || fail 'current package did not report unsupported gentle-init capability' || exit 1
+  [ ! -e "$root/assets/agents/gentle-init.md" ] || fail 'current package created a gentle-init target' || exit 1
+  cmp -s "$legacy" "$TMP_ROOT/pi-current-gentle-init-legacy-before.md" || fail 'current package removed its legacy marker' || exit 1
+  cmp -s "$workflow" "$TMP_ROOT/pi-current-gentle-init-workflow-before.md" || fail 'current package changed workflow consumer bytes' || exit 1
+  cmp -s "$delegation" "$TMP_ROOT/pi-current-gentle-init-delegation-before.md" || fail 'current package changed ODD consumer bytes' || exit 1
+  [ ! -e "$backups" ] || fail 'current package unsupported check created a backup' || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "current package gentle-init apply returned $rc" || exit 1
+  grep -Fq 'n/a            pi-gentle-init' "$output" || fail 'current package apply did not report unsupported capability' || exit 1
+  [ ! -e "$root/assets/agents/gentle-init.md" ] || fail 'current package apply created a gentle-init target' || exit 1
+  cmp -s "$legacy" "$TMP_ROOT/pi-current-gentle-init-legacy-before.md" || fail 'current package apply removed its legacy marker' || exit 1
+  cmp -s "$workflow" "$TMP_ROOT/pi-current-gentle-init-workflow-before.md" || fail 'current package apply changed workflow consumer bytes' || exit 1
+  cmp -s "$delegation" "$TMP_ROOT/pi-current-gentle-init-delegation-before.md" || fail 'current package apply changed ODD consumer bytes' || exit 1
+  [ ! -e "$backups" ] || fail 'current package unsupported apply created a backup' || exit 1
+)
+
+test_immediate_head_consumer_upgrades_exactly() (
+  local home="$TMP_ROOT/immediate-head-home" backups="$TMP_ROOT/immediate-head-backups" list prose out expected
+  list="$home/list.md"; prose="$home/prose.md"; out="$TMP_ROOT/immediate-head.out"; expected="$TMP_ROOT/immediate-head.expected"
+  mkdir -p "$home"
+  load_overlay "$home" "$backups"
+  {
+    printf '%s\n' 'before' "$ANCHOR_ITEM3" "$RUBRIC_ITEM4_HEAD_PREVIOUS" "$CACHE_HEAD_PREVIOUS" 'after'
+  } > "$list"
+  {
+    printf '%s\n' 'before' "$ANCHOR_ITEM3" "$RUBRIC_ITEM4" "$CACHE_NEW" 'after'
+  } > "$expected"
+  rubric_transform_list < "$list" > "$out" || fail 'immediate-HEAD list transform refused exact predecessor' || exit 1
+  cmp -s "$out" "$expected" || fail 'immediate-HEAD list/cache upgrade differs from exact expected output' || exit 1
+  rubric_transform_list < "$out" > "$list" || fail 'canonical list transform refused' || exit 1
+  cmp -s "$out" "$list" || fail 'immediate-HEAD list upgrade is not byte-idempotent' || exit 1
+  {
+    printf '%s\n' 'before' "$ANCHOR_PROSE" '' "$RUBRIC_PROSE_HEAD_PREVIOUS" 'after'
+  } > "$prose"
+  {
+    printf '%s\n' 'before' "$ANCHOR_PROSE" '' "$RUBRIC_PROSE" 'after'
+  } > "$expected"
+  rubric_transform_prose < "$prose" > "$out" || fail 'immediate-HEAD prose transform refused exact predecessor' || exit 1
+  cmp -s "$out" "$expected" || fail 'immediate-HEAD prose upgrade differs from exact expected output' || exit 1
+)
+
+test_pi_grouped_four_surface_transaction() (
+  local home="$TMP_ROOT/pi-grouped-home" backups="$TMP_ROOT/pi-grouped-backups" gentle legacy workflow delegation output expected_g expected_l expected_w expected_d before_g before_l before_w before_d rc hook recovery
+  gentle="$home/$PI_NPM_GENTLE_INIT_REL"; legacy="$home/$PI_NPM_INIT_REL"; workflow="$home/$PI_NPM_WORKFLOW_REL"; delegation="$home/$PI_NPM_DELEGATION_REL"; output="$TMP_ROOT/pi-grouped-output.txt"
+  expected_g="$TMP_ROOT/pi-grouped-g.expected"; expected_l="$TMP_ROOT/pi-grouped-l.expected"; expected_w="$TMP_ROOT/pi-grouped-w.expected"; expected_d="$TMP_ROOT/pi-grouped-d.expected"
+  setup_grouped() {
+    home="$1"; backups="$2"; gentle="$home/$PI_NPM_GENTLE_INIT_REL"; legacy="$home/$PI_NPM_INIT_REL"; workflow="$home/$PI_NPM_WORKFLOW_REL"; delegation="$home/$PI_NPM_DELEGATION_REL"
+    mkdir -p "$home/.gentle-ai" "$(dirname -- "$gentle")"
+    printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+    write_pi_gentle_init_stock > "$gentle"; write_pi_init_stock > "$legacy"; write_pi_workflow_220_fixture > "$workflow"; write_pi_delegation_310_fixture > "$delegation"
+    write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@9.9.9"]}'
+    load_overlay "$home" "$backups"
+    write_pi_init_stock | init_rubric_transform pi > "$legacy" || return 1
+  }
+  # This oracle is deliberately independent of production transforms: literal
+  # fixture bytes plus canonical payload variables define each expected output.
+  independent_insert_before() {
+    local input="$1" block="$2" anchor="$3" separator="$4" output="$5"
+    awk -v block="$block" -v anchor="$anchor" -v separator="$separator" '
+      $0 == anchor { print block; if (separator == "blank") print "" }
+      { print }
+    ' "$input" > "$output"
+  }
+  setup_grouped "$home" "$backups" || exit 1
+  independent_insert_before "$gentle" "$GENTLE_INIT_RUBRIC_PI" "$PI_GENTLE_INIT_PUBLICATION_BOUNDARY" none "$expected_g"
+  write_pi_init_stock > "$expected_l"
+  independent_insert_before "$workflow" "$RUBRIC_PI_WORKFLOW" "$PI_WORKFLOW_ARCHIVE" blank "$expected_w"
+  independent_insert_before "$delegation" "$RUBRIC_PI_ODD_FORWARDING" "$PI_ODD_DELEGATION" blank "$expected_d"
+  before_g="$TMP_ROOT/pi-grouped-g.before"; before_l="$TMP_ROOT/pi-grouped-l.before"; before_w="$TMP_ROOT/pi-grouped-w.before"; before_d="$TMP_ROOT/pi-grouped-d.before"
+  cp -- "$gentle" "$before_g"
+  cp -- "$legacy" "$before_l"; cp -- "$workflow" "$before_w"; cp -- "$delegation" "$before_d"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1; rc=$?
+  [ "$rc" -eq 2 ] || fail "grouped future check returned $rc" || exit 1
+  cmp -s "$gentle" "$before_g" && cmp -s "$legacy" "$before_l" && cmp -s "$workflow" "$before_w" && cmp -s "$delegation" "$before_d" || fail 'grouped check changed a Pi surface' || exit 1
+  [ ! -e "$backups" ] || fail 'grouped check created a backup' || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1 || exit 1
+  cmp -s "$gentle" "$expected_g" && cmp -s "$legacy" "$expected_l" && cmp -s "$workflow" "$expected_w" && cmp -s "$delegation" "$expected_d" || fail 'grouped apply did not install all exact candidates' || exit 1
+  # Adjacent tabs and multiple blank lines are upstream bytes. The independent
+  # oracle must reject a candidate that deletes them.
+  awk -v anchor="$PI_WORKFLOW_ARCHIVE" '$0 == anchor { print "\t"; print "" } { print }' "$before_w" > "$TMP_ROOT/pi-grouped-workflow-gapped"
+  independent_insert_before "$TMP_ROOT/pi-grouped-workflow-gapped" "$RUBRIC_PI_WORKFLOW" "$PI_WORKFLOW_ARCHIVE" blank "$TMP_ROOT/pi-grouped-workflow-gapped.expected"
+  pi_rubric_workflow_transform < "$TMP_ROOT/pi-grouped-workflow-gapped" > "$TMP_ROOT/pi-grouped-workflow-gapped.actual" || fail 'gapped workflow transform refused accepted upstream bytes' || exit 1
+  cmp -s "$TMP_ROOT/pi-grouped-workflow-gapped.actual" "$TMP_ROOT/pi-grouped-workflow-gapped.expected" || fail 'gapped workflow transform changed adjacent bytes' || exit 1
+  awk 'BEGIN { deleted = 0 } $0 == "\t" && !deleted { getline; deleted = 1; next } { print }' "$TMP_ROOT/pi-grouped-workflow-gapped.actual" > "$TMP_ROOT/pi-grouped-workflow-gapped.mutated"
+  if cmp -s "$TMP_ROOT/pi-grouped-workflow-gapped.expected" "$TMP_ROOT/pi-grouped-workflow-gapped.mutated"; then
+    fail 'independent expected cmp accepted a transform that deleted adjacent tab/blank bytes' || exit 1
+  fi
+  for file in "$gentle" "$legacy" "$workflow" "$delegation"; do [ -e "$backups/${file#"$home"/}" ] || fail "missing grouped backup for $file" || exit 1; done
+  cp -- "$gentle" "$before_g"; cp -- "$legacy" "$before_l"; cp -- "$workflow" "$before_w"; cp -- "$delegation" "$before_d"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1 || exit 1
+  cmp -s "$gentle" "$before_g" && cmp -s "$legacy" "$before_l" && cmp -s "$workflow" "$before_w" && cmp -s "$delegation" "$before_d" || fail 'second grouped apply was not byte-idempotent' || exit 1
+
+  # Every mandatory consumer/producer anchor or custom marker refusal completes preflight before any backup.
+  for hook in workflow legacy-marker gentle-marker delegation-marker; do
+    local refusal_home="$TMP_ROOT/pi-grouped-refusal-$hook" refusal_backups="$TMP_ROOT/pi-grouped-refusal-$hook-backups"
+    setup_grouped "$refusal_home" "$refusal_backups" || exit 1
+    case "$hook" in
+      workflow) printf '%s\n' 'custom workflow' > "$refusal_home/$PI_NPM_WORKFLOW_REL" ;;
+      delegation-marker) printf '%s\n' '<!-- gentle-ai:pi-odd-forwarding --> partial marker' > "$refusal_home/$PI_NPM_DELEGATION_REL" ;;
+      legacy-marker) printf '%s\n' '<!-- gentle-ai:sdd-init-rubric -->' 'custom predecessor' '<!-- /gentle-ai:sdd-init-rubric -->' > "$refusal_home/$PI_NPM_INIT_REL" ;;
+      gentle-marker) { write_pi_gentle_init_stock | awk '/^## Publication boundary$/{print "<!-- gentle-ai:gentle-init-rubric -->"} {print}'; } > "$refusal_home/$PI_NPM_GENTLE_INIT_REL" ;;
+    esac
+    cp -- "$refusal_home/$PI_NPM_GENTLE_INIT_REL" "$before_g"; cp -- "$refusal_home/$PI_NPM_INIT_REL" "$before_l"
+    HOME="$refusal_home" GENTLE_AI_BACKUP_ROOT="$refusal_backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1; [ "$?" -eq 1 ] || fail "$hook refusal check did not fail closed" || exit 1
+    cmp -s "$refusal_home/$PI_NPM_GENTLE_INIT_REL" "$before_g" && cmp -s "$refusal_home/$PI_NPM_INIT_REL" "$before_l" || fail "$hook refusal changed producer bytes" || exit 1
+    [ ! -e "$refusal_backups" ] || fail "$hook refusal created backups" || exit 1
+  done
+
+  for hook in backup-workflow rename-workflow rename-delegation; do
+    local failure_home="$TMP_ROOT/pi-grouped-$hook" failure_backups="$TMP_ROOT/pi-grouped-$hook-backups"
+    setup_grouped "$failure_home" "$failure_backups" || exit 1
+    cp -- "$failure_home/$PI_NPM_GENTLE_INIT_REL" "$before_g"; cp -- "$failure_home/$PI_NPM_INIT_REL" "$before_l"; cp -- "$failure_home/$PI_NPM_WORKFLOW_REL" "$before_w"; cp -- "$failure_home/$PI_NPM_DELEGATION_REL" "$before_d"
+    HOME="$failure_home" GENTLE_AI_BACKUP_ROOT="$failure_backups" GENTLE_AI_TEST_MODE=1 GENTLE_AI_TEST_PAIR_HOOK="$hook" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1; [ "$?" -eq 1 ] || fail "$hook failure did not return 1" || exit 1
+    cmp -s "$failure_home/$PI_NPM_GENTLE_INIT_REL" "$before_g" && cmp -s "$failure_home/$PI_NPM_INIT_REL" "$before_l" && cmp -s "$failure_home/$PI_NPM_WORKFLOW_REL" "$before_w" && cmp -s "$failure_home/$PI_NPM_DELEGATION_REL" "$before_d" || fail "$hook did not fully compensate" || exit 1
+  done
+  setup_grouped "$TMP_ROOT/pi-grouped-rollback" "$TMP_ROOT/pi-grouped-rollback-backups" || exit 1
+  HOME="$TMP_ROOT/pi-grouped-rollback" GENTLE_AI_BACKUP_ROOT="$TMP_ROOT/pi-grouped-rollback-backups" GENTLE_AI_TEST_MODE=1 GENTLE_AI_TEST_PAIR_HOOK='rename-delegation,rollback-workflow' APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1; [ "$?" -eq 1 ] || fail 'rollback failure did not return 1' || exit 1
+  grep -Fq 'RECOVERY-REQUIRED' "$output" && grep -Fq 'workflow' "$output" || fail 'rollback failure did not identify the mixed workflow target' || exit 1
+  recovery="$(find "$TMP_ROOT/pi-grouped-rollback/.pi/agent/npm/node_modules/gentle-pi/assets" -type f -name '.sdd-orchestrator-workflow.md.gentle-ai-recovery.*' -print -quit)"
+  [ -n "$recovery" ] || fail 'rollback failure did not retain a verified recovery artifact' || exit 1
+)
+
+test_pi_optional_odd_and_concurrent_drift() (
+  local home="$TMP_ROOT/pi-optional-home" backups="$TMP_ROOT/pi-optional-backups" root gentle legacy workflow delegation before_g before_l before_w before_d output
+  root="$home/$PI_NPM_PACKAGE_ROOT_REL"; gentle="$home/$PI_NPM_GENTLE_INIT_REL"; legacy="$home/$PI_NPM_INIT_REL"; workflow="$home/$PI_NPM_WORKFLOW_REL"; delegation="$home/$PI_NPM_DELEGATION_REL"; output="$TMP_ROOT/pi-optional.out"
+  setup_optional() {
+    home="$1"; backups="$2"; root="$home/$PI_NPM_PACKAGE_ROOT_REL"; gentle="$home/$PI_NPM_GENTLE_INIT_REL"; legacy="$home/$PI_NPM_INIT_REL"; workflow="$home/$PI_NPM_WORKFLOW_REL"; delegation="$home/$PI_NPM_DELEGATION_REL"
+    mkdir -p "$home/.gentle-ai" "$(dirname -- "$gentle")"
+    printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+    write_pi_gentle_init_stock > "$gentle"; write_pi_init_stock > "$legacy"; write_pi_workflow_220_fixture > "$workflow"
+    write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@9.9.9"]}'
+    load_overlay "$home" "$backups"
+  }
+  # Missing ODD asset is optional; producer and SDD workflow still migrate.
+  setup_optional "$home" "$backups" || exit 1
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1 || exit 1
+  grep -Fq 'gentle-ai:gentle-init-rubric' "$gentle" || fail 'missing ODD asset blocked producer migration' || exit 1
+  grep -Fq 'gentle-ai:pi-rubric-forwarding' "$workflow" || fail 'missing ODD asset blocked workflow migration' || exit 1
+  [ ! -e "$delegation" ] || fail 'missing ODD asset was created' || exit 1
+
+  # A safe regular ODD asset without the supported section is also optional.
+  setup_optional "$TMP_ROOT/pi-optional-safe-home" "$TMP_ROOT/pi-optional-safe-backups" || exit 1
+  printf '%s\n' 'unrelated upstream delegation prose' > "$delegation"; cp -- "$delegation" "$TMP_ROOT/pi-optional-safe-delegation.before"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1 || exit 1
+  cmp -s "$delegation" "$TMP_ROOT/pi-optional-safe-delegation.before" || fail 'safe ODD asset without anchor changed' || exit 1
+  grep -Fq 'gentle-ai:gentle-init-rubric' "$gentle" || fail 'safe ODD absence blocked migration' || exit 1
+  [ ! -e "$backups/${delegation#"$home"/}" ] || fail 'safe ODD absence was backed up' || exit 1
+
+  # An unchanged legacy participant drifting during backups stops before rename.
+  setup_optional "$TMP_ROOT/pi-drift-backup-home" "$TMP_ROOT/pi-drift-backup-backups" || exit 1
+  write_pi_delegation_310_fixture > "$delegation"; cp -- "$legacy" "$TMP_ROOT/pi-drift-backup-legacy.before"; cp -- "$gentle" "$TMP_ROOT/pi-drift-backup-gentle.before"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" GENTLE_AI_TEST_MODE=1 GENTLE_AI_TEST_PAIR_HOOK=drift-backup-sdd-init APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+  [ "$?" -eq 1 ] || fail 'legacy backup-time drift did not fail' || exit 1
+  grep -Fqx 'concurrent sdd-init edit' "$legacy" || fail 'legacy concurrent bytes were overwritten' || exit 1
+  cmp -s "$gentle" "$TMP_ROOT/pi-drift-backup-gentle.before" || fail 'backup-time drift allowed a prior replacement' || exit 1
+  ! find "$root/assets" -type f -name '.*.gentle-ai.??????' -print -quit | grep -q . || fail 'backup-time drift leaked staging' || exit 1
+
+  # A future delegation edit after the first rename is preserved while all prior
+  # transaction-written targets are compensated.
+  setup_optional "$TMP_ROOT/pi-drift-delegation-home" "$TMP_ROOT/pi-drift-delegation-backups" || exit 1
+  write_pi_init_stock | init_rubric_transform pi > "$legacy"; write_pi_delegation_310_fixture > "$delegation"
+  before_g="$TMP_ROOT/pi-drift-delegation-g.before"; before_l="$TMP_ROOT/pi-drift-delegation-l.before"; before_w="$TMP_ROOT/pi-drift-delegation-w.before"; before_d="$TMP_ROOT/pi-drift-delegation-d.before"
+  cp -- "$gentle" "$before_g"; cp -- "$legacy" "$before_l"; cp -- "$workflow" "$before_w"; cp -- "$delegation" "$before_d"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" GENTLE_AI_TEST_MODE=1 GENTLE_AI_TEST_PAIR_HOOK=drift-after-first-rename-delegation APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+  [ "$?" -eq 1 ] || fail 'delegation post-rename drift did not fail' || exit 1
+  grep -Fqx 'concurrent delegation edit' "$delegation" || fail 'delegation concurrent bytes were overwritten by rollback' || exit 1
+  cmp -s "$gentle" "$before_g" && cmp -s "$legacy" "$before_l" && cmp -s "$workflow" "$before_w" || fail 'post-rename drift did not compensate transaction writes' || exit 1
+  ! find "$root/assets" -type f -name '.*.gentle-ai.??????' -print -quit | grep -q . || fail 'post-rename drift leaked staging' || exit 1
+)
+
+test_pi_group_root_confinement() (
+  local home="$TMP_ROOT/pi-root-confinement-home" backups="$TMP_ROOT/pi-root-confinement-backups" root outside output
+  root="$home/$PI_NPM_PACKAGE_ROOT_REL"; outside="$TMP_ROOT/pi-root-confinement-outside"; output="$TMP_ROOT/pi-root-confinement.out"
+  for kind in agents assets; do
+    mkdir -p "$home/.gentle-ai" "$(dirname -- "$home/$PI_NPM_GENTLE_INIT_REL")" "$outside"
+    printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+    write_pi_gentle_init_stock > "$home/$PI_NPM_GENTLE_INIT_REL"; write_pi_init_stock > "$home/$PI_NPM_INIT_REL"; write_pi_workflow_220_fixture > "$home/$PI_NPM_WORKFLOW_REL"; write_pi_delegation_310_fixture > "$home/$PI_NPM_DELEGATION_REL"
+    write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@9.9.9"]}'
+    if [ "$kind" = agents ]; then
+      mv "$root/assets/agents" "$outside/agents"; ln -s "$outside/agents" "$root/assets/agents"
+      cp -- "$outside/agents/gentle-init.md" "$TMP_ROOT/pi-root-agents.before"
+    else
+      mv "$root/assets" "$outside/assets"; ln -s "$outside/assets" "$root/assets"
+      cp -- "$outside/assets/agents/gentle-init.md" "$TMP_ROOT/pi-root-assets.before"
+    fi
+    HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups-$kind" APPLY_SH_LIB=0 "$ROOT/apply.sh" --check > "$output" 2>&1
+    [ "$?" -eq 1 ] || fail "$kind symlink escape did not fail closed" || exit 1
+    if [ "$kind" = agents ]; then cmp -s "$outside/agents/gentle-init.md" "$TMP_ROOT/pi-root-agents.before" || fail 'agents escape changed external bytes' || exit 1
+    else cmp -s "$outside/assets/agents/gentle-init.md" "$TMP_ROOT/pi-root-assets.before" || fail 'asset-parent escape changed external bytes' || exit 1; fi
+    [ ! -e "$backups-$kind" ] || fail "$kind symlink escape created backups" || exit 1
+    home="$TMP_ROOT/pi-root-confinement-$kind-next"; root="$home/$PI_NPM_PACKAGE_ROOT_REL"; outside="$TMP_ROOT/pi-root-confinement-$kind-next-outside"
+  done
+)
+
+test_pi_workflow_and_odd_no_final_newline_byte_preservation() (
+  local home="$TMP_ROOT/pi-terminal-newline-home" backups="$TMP_ROOT/pi-terminal-newline-backups" workflow delegation output second
+  home="$TMP_ROOT/pi-terminal-newline-home"; workflow="$home/workflow.md"; delegation="$home/delegation.md"; output="$TMP_ROOT/pi-terminal-newline-output.md"; second="$TMP_ROOT/pi-terminal-newline-second.md"
+  mkdir -p "$home"; load_overlay "$home" "$backups"
+
+  write_pi_workflow_220_fixture > "$workflow"
+  python3 - "$workflow" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1]); path.write_bytes(path.read_bytes().rstrip(b"\n"))
+PY
+  pi_rubric_workflow_transform < "$workflow" > "$output" || fail 'no-final-newline workflow transform refused fixture' || exit 1
+  python3 - "$workflow" "$output" <<'PY' || exit 1
+import pathlib, sys
+source, result = map(lambda p: pathlib.Path(p).read_bytes(), sys.argv[1:])
+assert not result.endswith(b"\n")
+open_mark = b"<!-- gentle-ai:pi-rubric-forwarding -->\n"
+close_mark = b"<!-- /gentle-ai:pi-rubric-forwarding -->\n"
+start, end = result.index(open_mark), result.index(close_mark) + len(close_mark) + 1
+assert result[:start] + result[end:] == source
+PY
+  pi_rubric_workflow_transform < "$output" > "$second" || fail 'no-final-newline workflow idempotence refused fixture' || exit 1
+  cmp -s "$output" "$second" || fail 'no-final-newline workflow idempotence changed bytes' || exit 1
+
+  write_pi_delegation_310_fixture > "$delegation"
+  python3 - "$delegation" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1]); path.write_bytes(path.read_bytes().rstrip(b"\n"))
+PY
+  pi_odd_forwarding_transform < "$delegation" > "$output" || fail 'no-final-newline delegation transform refused fixture' || exit 1
+  python3 - "$delegation" "$output" <<'PY' || exit 1
+import pathlib, sys
+source, result = map(lambda p: pathlib.Path(p).read_bytes(), sys.argv[1:])
+assert not result.endswith(b"\n")
+open_mark = b"<!-- gentle-ai:pi-odd-forwarding -->\n"
+close_mark = b"<!-- /gentle-ai:pi-odd-forwarding -->\n"
+start, end = result.index(open_mark), result.index(close_mark) + len(close_mark) + 1
+assert result[:start] + result[end:] == source
+PY
+  pi_odd_forwarding_transform < "$output" > "$second" || fail 'no-final-newline delegation idempotence refused fixture' || exit 1
+  cmp -s "$output" "$second" || fail 'no-final-newline delegation idempotence changed bytes' || exit 1
+
+  # Immediate HEAD blocks upgrade once, while any complete custom block refuses.
+  write_pi_workflow_220_fixture | awk -v block="$RUBRIC_PI_WORKFLOW_HEAD_PREVIOUS" -v anchor="$PI_WORKFLOW_ARCHIVE" '$0 == anchor { print block; print "" } { print }' > "$workflow"
+  pi_rubric_workflow_transform < "$workflow" > "$output" || fail 'exact HEAD workflow predecessor was refused' || exit 1
+  grep -Fq "$RUBRIC_PI_WORKFLOW" "$output" || fail 'exact HEAD workflow predecessor was not upgraded' || exit 1
+  sed 's/Project TDD Rubric Forwarding/Custom workflow forwarding/' "$output" > "$workflow"
+  pi_rubric_workflow_transform < "$workflow" > "$second" && fail 'custom complete workflow block was overwritten' && exit 1
+
+  write_pi_delegation_310_fixture | awk -v block="$RUBRIC_PI_ODD_FORWARDING_HEAD_PREVIOUS" -v anchor="$PI_ODD_DELEGATION" '$0 == anchor { print block; print "" } { print }' > "$delegation"
+  pi_odd_forwarding_transform < "$delegation" > "$output" || fail 'exact HEAD ODD predecessor was refused' || exit 1
+  grep -Fq "$RUBRIC_PI_ODD_FORWARDING" "$output" || fail 'exact HEAD ODD predecessor was not upgraded' || exit 1
+  sed 's/Approved Rubric Forwarding for ODD/Custom ODD forwarding/' "$output" > "$delegation"
+  pi_odd_forwarding_transform < "$delegation" > "$second" && fail 'custom complete ODD block was overwritten' && exit 1
+
+  # Tabs and multiple blank lines around the insertion anchor remain exact bytes.
+  write_pi_delegation_310_fixture | awk -v anchor="$PI_ODD_DELEGATION" '$0 == anchor { print "\t"; print "" } { print }' > "$delegation"
+  pi_odd_forwarding_transform < "$delegation" > "$output" || fail 'gapped ODD transform refused fixture' || exit 1
+  python3 - "$delegation" "$output" <<'PY' || exit 1
+import pathlib, sys
+source, result = (pathlib.Path(p).read_bytes() for p in sys.argv[1:])
+open_mark = b"<!-- gentle-ai:pi-odd-forwarding -->\n"
+close_mark = b"<!-- /gentle-ai:pi-odd-forwarding -->\n"
+start, end = result.index(open_mark), result.index(close_mark) + len(close_mark) + 1
+assert b"\t\n\n" in source
+assert result[:start] + result[end:] == source
+PY
+)
+
+test_pi_workflow_managed_gap_refusal_and_idempotence() (
+  local home="$TMP_ROOT/pi-workflow-gap-home" backups="$TMP_ROOT/pi-workflow-gap-backups" file before first root
+  home="$TMP_ROOT/pi-workflow-gap-home"; root="$home/$PI_NPM_PACKAGE_ROOT_REL"; file="$home/$PI_NPM_WORKFLOW_REL"; before="$TMP_ROOT/pi-workflow-gap-before.md"; first="$TMP_ROOT/pi-workflow-gap-first.md"
+  mkdir -p "$(dirname -- "$file")"
+  load_overlay "$home" "$backups"
+  CHECK_ONLY=0
+
+  # The verifier fixture has unmarked prose in the managed gap. Refusal must
+  # leave its target, backups, and temporary staging untouched.
+  write_pi_workflow_220_with_gap 'verifier nonblank fixture' > "$file"
+  cp -- "$file" "$before"
+  expect_rc 3 rubric_apply_md "$file" pi-workflow || exit 1
+  cmp -s "$file" "$before" || fail 'nonblank workflow gap refusal mutated its target' || exit 1
+  [ ! -e "$backups" ] || fail 'nonblank workflow gap refusal created a backup' || exit 1
+  ! find "$root" -type f -name '.*.gentle-ai.*' -print -quit | grep -q . || fail 'nonblank workflow gap refusal left staging' || exit 1
+
+  # Blank/tab/multiple-blank upstream gap bytes are accepted and survive both
+  # the first insertion and an exact idempotent second transform.
+  write_pi_workflow_220_fixture | awk -v anchor="$PI_WORKFLOW_ARCHIVE" '$0 == anchor { print "\t"; print ""; print "" } { print }' > "$file"
+  cp -- "$file" "$before"
+  expect_rc 0 rubric_apply_md "$file" pi-workflow || exit 1
+  cp -- "$file" "$first"
+  python3 - "$before" "$first" <<'PY' || exit 1
+import pathlib
+import sys
+source, result = (pathlib.Path(path).read_bytes() for path in sys.argv[1:])
+open_mark = b"<!-- gentle-ai:pi-rubric-forwarding -->\n"
+close_mark = b"<!-- /gentle-ai:pi-rubric-forwarding -->\n"
+start = result.index(open_mark)
+end = result.index(close_mark) + len(close_mark) + 1
+assert b"\t\n\n\n" in source
+assert result[:start] + result[end:] == source
+PY
+  expect_rc 1 rubric_apply_md "$file" pi-workflow || exit 1
+  cmp -s "$file" "$first" || fail 'second valid workflow gap transform was not byte-idempotent' || exit 1
+)
+
+test_pi_final_drift_successful_compensation_reports_detail() (
+  local home="$TMP_ROOT/pi-final-drift-success-home" backups="$TMP_ROOT/pi-final-drift-success-backups" gentle legacy workflow delegation output before_g before_w before_d backup_g backup_w backup_d expected
+  home="$TMP_ROOT/pi-final-drift-success-home"; backups="$TMP_ROOT/pi-final-drift-success-backups"; gentle="$home/$PI_NPM_GENTLE_INIT_REL"; legacy="$home/$PI_NPM_INIT_REL"; workflow="$home/$PI_NPM_WORKFLOW_REL"; delegation="$home/$PI_NPM_DELEGATION_REL"; output="$TMP_ROOT/pi-final-drift-success.out"
+  mkdir -p "$home/.gentle-ai" "$(dirname -- "$gentle")"
+  printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+  write_pi_gentle_init_stock > "$gentle"; write_pi_init_stock > "$legacy"; write_pi_workflow_220_fixture > "$workflow"; write_pi_delegation_310_fixture > "$delegation"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@9.9.9"]}'
+  cp -- "$gentle" "$TMP_ROOT/pi-final-drift-success-g.before"; cp -- "$workflow" "$TMP_ROOT/pi-final-drift-success-w.before"; cp -- "$delegation" "$TMP_ROOT/pi-final-drift-success-d.before"
+  before_g="$TMP_ROOT/pi-final-drift-success-g.before"; before_w="$TMP_ROOT/pi-final-drift-success-w.before"; before_d="$TMP_ROOT/pi-final-drift-success-d.before"
+
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" GENTLE_AI_TEST_MODE=1 GENTLE_AI_TEST_PAIR_HOOK=drift-final-sdd-init APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+  [ "$?" -eq 1 ] || fail 'final unchanged-participant drift with successful compensation did not fail' || exit 1
+  backup_g="$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/gentle-init.md"
+  backup_w="$backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md"
+  backup_d="$backups/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md"
+  for backup in "$backup_g" "$backup_w" "$backup_d"; do [ -f "$backup" ] || fail "successful compensation is missing verified backup: $backup" || exit 1; done
+  expected="  TARGET-DRIFT   pi-gentle-init $PI_NPM_GENTLE_INIT_REL (selected sibling changed during transaction; verified backups: $backup_g,$backup_w,$backup_d; concurrently changed untouched participants without verified recovery: sdd-init)"
+  grep -Fqx "$expected" "$output" || fail 'TARGET-DRIFT omitted the successful-compensation recovery detail' || exit 1
+  ! grep -Fq 'RECOVERY-REQUIRED' "$output" || fail 'successful compensation incorrectly required recovery' || exit 1
+  ! grep -Fq 'verified recovery artifacts:' "$output" || fail 'successful compensation claimed a retained recovery artifact' || exit 1
+  ! grep -Fq "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" "$output" || fail 'successful compensation claimed a backup for untouched sdd-init' || exit 1
+  grep -Fqx 'concurrent sdd-init edit' "$legacy" || fail 'successful-compensation untouched participant was overwritten' || exit 1
+  cmp -s "$gentle" "$before_g" && cmp -s "$workflow" "$before_w" && cmp -s "$delegation" "$before_d" || fail 'successful final-drift compensation did not restore transaction writes' || exit 1
+)
+
+test_pi_early_snapshot_drift_cleans_all_temps() (
+  local home="$TMP_ROOT/pi-stage-drift-home" backups="$TMP_ROOT/pi-stage-drift-backups" root gentle legacy workflow delegation output
+  home="$TMP_ROOT/pi-stage-drift-home"; backups="$TMP_ROOT/pi-stage-drift-backups"; root="$home/$PI_NPM_PACKAGE_ROOT_REL"; gentle="$home/$PI_NPM_GENTLE_INIT_REL"; legacy="$home/$PI_NPM_INIT_REL"; workflow="$home/$PI_NPM_WORKFLOW_REL"; delegation="$home/$PI_NPM_DELEGATION_REL"; output="$TMP_ROOT/pi-stage-drift.out"
+  mkdir -p "$home/.gentle-ai" "$(dirname -- "$gentle")"
+  printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+  load_overlay "$home" "$backups"
+  write_pi_gentle_init_stock > "$gentle"; write_pi_init_stock | init_rubric_transform pi > "$legacy"; write_pi_workflow_220_fixture > "$workflow"; write_pi_delegation_310_fixture > "$delegation"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@9.9.9"]}'
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" GENTLE_AI_TEST_MODE=1 GENTLE_AI_TEST_PAIR_HOOK=drift-stage-workflow APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+  [ "$?" -eq 1 ] || fail 'early workflow snapshot drift did not fail' || exit 1
+  grep -Fqx 'concurrent workflow edit' "$workflow" || fail 'early workflow snapshot drift was overwritten' || exit 1
+  ! find "$root" -type f -name '.*.gentle-ai.*' -print -quit | grep -q . || fail 'early snapshot drift left staged candidate or snapshot files' || exit 1
+)
+
+test_pi_final_drift_recovery_copy_failure_reports_verified_evidence() (
+  local home="$TMP_ROOT/pi-final-drift-home" backups="$TMP_ROOT/pi-final-drift-backups" root gentle legacy workflow delegation output before_g before_w before_d backup_g backup_w backup_d
+  home="$TMP_ROOT/pi-final-drift-home"; backups="$TMP_ROOT/pi-final-drift-backups"; root="$home/$PI_NPM_PACKAGE_ROOT_REL"; gentle="$home/$PI_NPM_GENTLE_INIT_REL"; legacy="$home/$PI_NPM_INIT_REL"; workflow="$home/$PI_NPM_WORKFLOW_REL"; delegation="$home/$PI_NPM_DELEGATION_REL"; output="$TMP_ROOT/pi-final-drift.out"
+  mkdir -p "$home/.gentle-ai" "$(dirname -- "$gentle")"
+  printf '%s\n' '{"installed_agents":["pi"]}' > "$home/.gentle-ai/state.json"
+  write_pi_gentle_init_stock > "$gentle"; write_pi_init_stock > "$legacy"; write_pi_workflow_220_fixture > "$workflow"; write_pi_delegation_310_fixture > "$delegation"
+  write_pi_package_settings "$home" '{"packages":["npm:gentle-pi@9.9.9"]}'
+  before_g="$TMP_ROOT/pi-final-drift-g.before"; before_w="$TMP_ROOT/pi-final-drift-w.before"; before_d="$TMP_ROOT/pi-final-drift-d.before"
+  cp -- "$gentle" "$before_g"; cp -- "$workflow" "$before_w"; cp -- "$delegation" "$before_d"
+  HOME="$home" GENTLE_AI_BACKUP_ROOT="$backups" GENTLE_AI_TEST_MODE=1 GENTLE_AI_TEST_PAIR_HOOK='drift-final-sdd-init,recovery-copy' APPLY_SH_LIB=0 "$ROOT/apply.sh" > "$output" 2>&1
+  [ "$?" -eq 1 ] || fail 'final unchanged-participant drift with recovery-copy failure did not fail' || exit 1
+  grep -Fq 'RECOVERY-REQUIRED' "$output" || fail 'final drift did not report recovery required' || exit 1
+  grep -Fq 'transaction-written targets may remain changed:' "$output" || fail 'final drift did not distinguish transaction-written targets' || exit 1
+  grep -Fq 'concurrently changed untouched participants without verified recovery: sdd-init' "$output" || fail 'final drift did not identify the untouched concurrent participant' || exit 1
+  ! grep -Fq 'backup-only:' "$output" || fail 'final drift mislabeled an unchanged participant backup-only' || exit 1
+  ! grep -Fq '.gentle-ai-recovery.' "$output" || fail 'final drift reported an unverified recovery artifact path' || exit 1
+  ! find "$root/assets" -type f -name '.*.gentle-ai-recovery.*' -print -quit | grep -q . || fail 'final drift retained a zero-byte recovery artifact' || exit 1
+  grep -Fqx 'concurrent sdd-init edit' "$legacy" || fail 'final unchanged participant drift was overwritten' || exit 1
+  backup_g="$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/gentle-init.md"
+  backup_w="$backups/.pi/agent/npm/node_modules/gentle-pi/assets/sdd-orchestrator-workflow.md"
+  backup_d="$backups/.pi/agent/npm/node_modules/gentle-pi/assets/orchestrator-delegation.md"
+  for backup in "$backup_g" "$backup_w" "$backup_d"; do
+    [ -f "$backup" ] || fail "recovery output named a missing backup: $backup" || exit 1
+    grep -Fq "$backup" "$output" || fail "recovery output omitted verified backup: $backup" || exit 1
+  done
+  ! grep -Fq "$backups/.pi/agent/npm/node_modules/gentle-pi/assets/agents/sdd-init.md" "$output" || fail 'recovery output named nonexistent untouched backup' || exit 1
+  cmp -s "$before_g" "$backup_g" || fail 'final drift gentle-init backup bytes differ' || exit 1
+  cmp -s "$before_w" "$backup_w" || fail 'final drift workflow backup bytes differ' || exit 1
+  cmp -s "$before_d" "$backup_d" || fail 'final drift delegation backup bytes differ' || exit 1
+)
+
+test_managed_asset_diagnostic_source_confinement() (
+  local home="$TMP_ROOT/diagnostic-confinement-home" backups="$TMP_ROOT/diagnostic-confinement-backups" root outside bin log output sha jq
+  home="$TMP_ROOT/diagnostic-confinement-home"; root="$home/$PI_NPM_PACKAGE_ROOT_REL"; outside="$TMP_ROOT/diagnostic-confinement-outside"; bin="$TMP_ROOT/diagnostic-confinement-bin"; log="$TMP_ROOT/diagnostic-confinement-tools.log"; output="$TMP_ROOT/diagnostic-confinement.out"
+  write_diag_package "$home"; mkdir -p "$outside" "$bin" "$home/.pi/agent/chains" "$outside/migrations"
+  cp -- "$root/assets/chains/sdd-full.chain.md" "$home/.pi/agent/chains/sdd-full.chain.md"
+  printf '%s\n' '{"schemaVersion":1,"packageVersion":"outside","assets":{}}' > "$outside/migrations/canary.json"
+  mv "$root/assets/chains" "$outside/chains"; ln -s "$outside/chains" "$root/assets/chains"
+  mkdir -p "$root/assets/migrations"; rmdir "$root/assets/migrations"; ln -s "$outside/migrations" "$root/assets/migrations"
+  sha="$(command -v sha256sum)" || fail 'sha256sum is required for confinement wrapper proof' || exit 1
+  jq="$(command -v jq)" || fail 'jq is required for confinement wrapper proof' || exit 1
+  cat > "$bin/sha256sum" <<EOF
+#!/usr/bin/env bash
+printf 'sha256sum %s\\n' "\$*" >> "$log"
+case "\$*" in *"$outside"*) exit 97 ;; esac
+exec "$sha" "\$@"
+EOF
+  cat > "$bin/jq" <<EOF
+#!/usr/bin/env bash
+printf 'jq %s\\n' "\$*" >> "$log"
+case "\$*" in *"$outside"*) exit 98 ;; esac
+exec "$jq" "\$@"
+EOF
+  chmod 755 "$bin/sha256sum" "$bin/jq"
+  load_overlay "$home" "$backups"
+  PATH="$bin:$PATH" managed_asset_diagnostic > "$output"
+  grep -Fq 'UNAVAILABLE package assets/chains (source directory unsafe/unverifiable; not read)' "$output" || fail 'symlinked diagnostic source tree was not reported unsafe' || exit 1
+  grep -Fq 'UNAVAILABLE migration registry directory (unsafe/unverifiable; not read)' "$output" || fail 'symlinked migration registry directory was not reported unsafe' || exit 1
+  ! grep -Fq "$outside" "$log" || fail 'instrumented jq/sha256 wrapper received an external canary path' || exit 1
+)
+
+test_consumer_predecessor_sentinel_refusal() (
+  local home="$TMP_ROOT/consumer-sentinel-home" backups="$TMP_ROOT/consumer-sentinel-backups" list prose out
+  list="$home/list.md"; prose="$home/prose.md"; out="$TMP_ROOT/consumer-sentinel.out"; mkdir -p "$home"; load_overlay "$home" "$backups"
+  printf '%s\n' "$ANCHOR_ITEM3" '4. **Additional condition — approved per-work-type project policy (project-generated, this file stays project-agnostic).**' 'custom truncated managed policy' > "$list"
+  rubric_transform_list < "$list" > "$out" && fail 'custom list predecessor was inserted beside' && exit 1
+  printf '%s\n' "$ANCHOR_ITEM3" 'The orchestrator reads the canonical `sdd-init` authoritative policy but custom prose continues.' > "$list"
+  rubric_transform_list < "$list" > "$out" && fail 'custom cache predecessor was inserted beside' && exit 1
+  printf '%s\n' "$ANCHOR_ITEM3" "$CACHE_OLD" > "$list"
+  rubric_transform_list < "$list" > "$out" || fail 'exact older cache predecessor was refused' || exit 1
+  grep -Fq "$CACHE_NEW" "$out" || fail 'exact older cache predecessor was not upgraded' || exit 1
+  printf '%s\n' "$ANCHOR_ITEM3" 'The orchestrator resolves TDD status ONCE per session but custom cache prose continues.' > "$list"
+  cp -- "$list" "$TMP_ROOT/consumer-old-cache.before"
+  rubric_transform_list < "$list" > "$out" && fail 'truncated older cache-family sentinel was accepted' && exit 1
+  expect_rc 3 rubric_apply_md "$list" list || exit 1
+  cmp -s "$list" "$TMP_ROOT/consumer-old-cache.before" || fail 'truncated older cache-family refusal changed target' || exit 1
+  printf '%s\n' "$ANCHOR_PROSE" 'For each `sdd-apply` or `sdd-verify` work slice, custom truncated prose.' > "$prose"
+  rubric_transform_prose < "$prose" > "$out" && fail 'custom prose predecessor was inserted beside' && exit 1
+  printf '%s\n' "$ANCHOR_PROSE" 'Unknown unrelated prose remains safe.' > "$prose"
+  rubric_transform_prose < "$prose" > "$out" || fail 'unknown unrelated prose was refused' || exit 1
+)
+
 run() {
   local name="$1"
+  NAMED_SCENARIOS=$((NAMED_SCENARIOS + 1))
   if "$name"; then
     printf 'PASS: %s\n' "${name#test_}"
     PASS=$((PASS + 1))
@@ -2630,6 +3404,27 @@ run() {
     printf 'FAIL: %s\n' "${name#test_}" >&2
     FAIL=$((FAIL + 1))
   fi
+}
+
+run_aggregate() {
+  local name="$1" output rc
+  shift
+  AGGREGATE_COMMANDS=$((AGGREGATE_COMMANDS + 1))
+  output="$(mktemp "$TMP_ROOT/aggregate.XXXXXX")" || { FAIL=$((FAIL + 1)); return; }
+  "$@" > "$output" 2>&1
+  rc=$?
+  cat "$output"
+  if [ "$rc" -ne 0 ]; then
+    printf 'FAIL: aggregate %s\n' "$name" >&2
+    FAIL=$((FAIL + 1))
+  elif grep -q '^SKIP:' "$output"; then
+    printf 'SKIP: aggregate %s\n' "$name"
+    SKIPPED=$((SKIPPED + 1))
+  else
+    printf 'PASS: aggregate %s\n' "$name"
+    PASS=$((PASS + 1))
+  fi
+  rm -f -- "$output"
 }
 
 run test_claude_idempotence_and_backup
@@ -2656,6 +3451,7 @@ run test_pi_no_jq_node_object_source_selects_npm
 run test_pi_jq_json_source_record_framing
 run test_pi_no_jq_node_json_source_record_framing
 run test_pi_conflicting_configured_sources_fail
+# Restored HEAD scenarios: selected root, missing legacy sibling, and unsafe legacy sibling.
 run test_pi_selected_missing_path_does_not_fallback
 run test_pi_selected_missing_sdd_init_does_not_fallback
 run test_pi_selected_unsafe_sdd_init_blocks_preflight
@@ -2663,8 +3459,10 @@ run test_pi_object_source_selects_npm_with_jq
 run test_pi_unsupported_configured_source_fails
 run test_pi_unrecognized_git_identity_fails_closed_before_fallback
 run test_pi_local_path_identity_fails_closed_before_fallback
+run test_pi_local_home_path_source_selects_root
 run test_pi_unrelated_helper_does_not_block_unique_npm_layout
 run test_pi_canonical_github_forms_select_git
+# Restored HEAD consumer and host-row scenarios retain their original assertions.
 run test_pi_workflow_rubric_forwarding_contract
 run test_pi_odd_forwarding_contract
 run test_pi_workflow_refuses_malformed_or_stale_structure
@@ -2691,20 +3489,34 @@ run test_managed_asset_diagnostic_rejects_forged_package_identity
 run test_managed_asset_diagnostic_respects_configured_package_root
 run test_managed_asset_diagnostic_marks_skipped_source_scope_unavailable
 run test_init_rubric_refuses_ambiguous_or_partial_shapes
+# Restored prior-candidate scenarios now call the grouped transaction helper above.
+run test_pi_gentle_init_capability_and_transaction
+run test_pi_gentle_init_pair_failure_recovery
+run test_pi_gentle_init_missing_python_capability
+run test_pi_gentle_init_byte_preservation
+run test_pi_current_package_gentle_init_unsupported_noop
+run test_immediate_head_consumer_upgrades_exactly
+run test_pi_grouped_four_surface_transaction
+run test_pi_optional_odd_and_concurrent_drift
+run test_pi_group_root_confinement
+run test_pi_workflow_and_odd_no_final_newline_byte_preservation
+run test_pi_workflow_managed_gap_refusal_and_idempotence
+run test_pi_early_snapshot_drift_cleans_all_temps
+run test_pi_final_drift_successful_compensation_reports_detail
+run test_pi_final_drift_recovery_copy_failure_reports_verified_evidence
+run test_managed_asset_diagnostic_source_confinement
+run test_consumer_predecessor_sentinel_refusal
 run test_neutral_external_profile_lifecycle
 run test_fresh_260_active_layout_lifecycle
 
-bash "$ROOT/tests/init-rubric-contract.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
-bash "$ROOT/tests/rubric-engram-recovery.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
-bash "$ROOT/tests/rubric-consumer-gate.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
-bash "$ROOT/tests/rubric-compiler-benchmark.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
-bash "$ROOT/tests/rubric-compiler-semantic-evaluation.sh" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
-bash "$ROOT/tests/rubric-compiler-multi-project-benchmark.sh" --self-test && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
-bash "$ROOT/tests/rubric-compiler-multi-project-benchmark.sh" --predictions "$ROOT/tests/fixtures/rubric-compiler/multi-project/predictions-v1.tsv" && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+run_aggregate init-rubric-contract bash "$ROOT/tests/init-rubric-contract.sh"
+run_aggregate rubric-engram-recovery bash "$ROOT/tests/rubric-engram-recovery.sh"
+run_aggregate rubric-consumer-gate bash "$ROOT/tests/rubric-consumer-gate.sh"
+run_aggregate rubric-compiler-benchmark bash "$ROOT/tests/rubric-compiler-benchmark.sh"
+run_aggregate rubric-compiler-semantic-evaluation bash "$ROOT/tests/rubric-compiler-semantic-evaluation.sh"
+run_aggregate rubric-compiler-multi-project-self-test bash "$ROOT/tests/rubric-compiler-multi-project-benchmark.sh" --self-test
+run_aggregate rubric-compiler-multi-project-predictions bash "$ROOT/tests/rubric-compiler-multi-project-benchmark.sh" --predictions "$ROOT/tests/fixtures/rubric-compiler/multi-project/predictions-v1.tsv"
+run_aggregate composer-unittest bash -c 'cd "$1" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p "test_composer_*.py"' _ "$ROOT"
 
-(
-  cd "$ROOT" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_composer_*.py'
-) && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
-
-printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+printf '\nscenarios: %d, aggregate commands: %d, passed: %d, failed: %d, skipped: %d\n' "$NAMED_SCENARIOS" "$AGGREGATE_COMMANDS" "$PASS" "$FAIL" "$SKIPPED"
 [ "$FAIL" -eq 0 ]
