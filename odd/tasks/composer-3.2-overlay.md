@@ -33,7 +33,7 @@ Prepare a local `v3.2.0-overlay.1` release candidate whose deterministic compose
 ## Tasks
 
 - [x] C32-001 Define a schema-versioned target/profile contract that preserves v1 exactly and represents the four package assets explicitly, including optional delegation without fabricated bytes.
-- [ ] C32-002 Implement pure fail-closed candidate transforms for `gentle-init`, legacy `sdd-init` retirement, workflow forwarding, and optional delegation forwarding, with behavior-first tests.
+- [x] C32-002 Implement pure fail-closed candidate transforms for `gentle-init`, legacy `sdd-init` retirement, workflow forwarding, and optional delegation forwarding, with behavior-first tests.
 - [ ] C32-003 Propagate the selected inventory through snapshot, package-claim preparation, confirmation, and CLI evidence without granting application authority.
 - [ ] C32-004 Update composer documentation and release provenance; remove statements that incorrectly call the composer migration deferred for this release.
 - [ ] C32-005 Run focused tests under normal Python and `python3 -O`, full overlay verification, independent verification, native review, then create local annotated tag `v3.2.0-overlay.1` only if every gate passes.
@@ -55,4 +55,5 @@ Prepare a local `v3.2.0-overlay.1` release candidate whose deterministic compose
 - Exploration found current v1 inventory in `composer.bundle.TARGETS`, package claim source version `2.7.0`, and fixed fourteen-target assumptions across bundle, snapshot, preparation, confirmation, CLI, and tests.
 - Current `apply.sh` transaction resolves exactly `gentle-init`, `sdd-init`, workflow, and optional delegation under one selected package root.
 - Active package is `gentle-pi 3.2.0` with embedded Gentle AI `3.1.0`.
-- C32-001 added immutable v1/v2 profile inventories while leaving v2 composition inactive. Independent verification passed 13/13 tests under normal Python and 13/13 under `python3 -O`; `git diff --check` passed. The exact v1 inventory remains 14 targets, v2 is 18 targets with only delegation optional, and `orchestrator-memory.md` is absent.
+- C32-001 added immutable v1/v2 profile inventories while leaving v2 composition inactive. Independent verification passed 13/13 tests under normal Python and 13/13 under `python3 -O`; `git diff --check` passed. The exact v1 inventory remains 14 targets, v2 is 18 targets with only delegation optional, and `orchestrator-memory.md` is absent. Commit: `c700546`.
+- C32-002 added explicit byte-only candidate transforms for all four reviewed transaction surfaces while keeping optional delegation absence/non-applicability explicit. Agent transforms passed 16/16 tests under normal and optimized Python and closed native review `review-9fc5fca85b168746`; commit `5f19fba`. Routing transforms passed 10/10 tests under both modes and closed native review `review-dd42d1b1d97ea982`; commit `e23263b`. Both slices preserve current/predecessor recognition, fail closed on unrecognized managed content, and keep filesystem/HOME/application authority outside the composer.
