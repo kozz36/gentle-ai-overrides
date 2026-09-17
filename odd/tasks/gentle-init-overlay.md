@@ -44,8 +44,9 @@ The current overlay injects project-policy production into `sdd-init`, while the
   - [x] GIO-004 Pi capability/transaction sub-slice: current-package apply/check unsupported no-op; future insertion; exact legacy retirement; anchor/marker refusals; selected-root and unsafe-target coverage; injected paired failure/rollback recovery and no-final-newline byte-preservation coverage.
 - [x] GIO-005 Update README with Pi-first/legacy-host matrix and release gate.
 - [x] GIO-006 Run unit, static-contract, lint, and diff checks; obtain independent verification.
-- [ ] GIO-007 Native-review the overlay candidate.
-- [ ] GIO-008 Apply globally only after an official package release ships `gentle-init`; until then check-only must report safe unsupported/no-op behavior.
+- [x] GIO-007 Native-review the overlay candidate.
+- [ ] GIO-008 Apply globally only after an official package release ships `gentle-init`, or through an explicitly authorized isolated dogfood package that owns the asset; otherwise check-only must report safe unsupported/no-op behavior.
+- [x] GIO-009 Recognize Pi's canonical HOME-confined relative serialization for an installed local `gentle-pi` source without accepting traversal, external roots, malformed framing, or ambiguous sources.
 
 ## Acceptance criteria
 
@@ -82,6 +83,9 @@ The current overlay injects project-policy production into `sdd-init`, while the
 - 2026-09-17: Fresh-verifier correction: package metadata, registry directories/leaves, and advisory assets are confined before parser/hash access; Pi workflow/ODD marker blocks require exact current or stored HEAD bytes; grouped expected outputs use an independent oracle; recovery reports list only verified paths and distinguish untouched concurrent drift. Corpus skips are counted separately. GIO-006 remains unchecked pending the required verification receipt.
 - 2026-09-17: Final minimal GI-008 correction: the workflow managed gap now rejects unmarked nonblank bytes before either insertion or recognized-block replacement while preserving valid blank/tab gaps; handled rc5 final drift now reports verified backups plus the untouched-participant category without inventing artifacts; local-source documentation distinguishes lexical HOME selection from canonical-root confinement. `bash tests/run.sh` passed 78 scenarios and 8 aggregate commands (84 passed, 0 failed, 2 corpus skips); static-contract 10/0, consumer-gate 7/0, ShellCheck, syntax, and diff checks passed.
 - 2026-09-17: Independent final verification returned unconditional PASS with the same totals, stable candidate hashes, unchanged composer/historical Pi payload, and no remaining HIGH findings. GIO-006 is complete.
+- 2026-09-17: Native review lineage `review-0b0f9f9cf82b407f` approved the overlay candidate and commit `ab28cc3` preserved that tree. GIO-007 is complete.
+- 2026-09-17: Authorized 3.2.0 dogfood exposed GIO-009 before global mutation. Pi 0.85.1 stores an absolute user-local install as a path relative to `~/.pi/agent` (observed `../../.local/share/gentle-pi-dogfood/3.2.0/gentle-pi`), while the overlay accepted only synthetic `path:$HOME/...` or `file:$HOME/...` records. Both package-switch attempts rolled back exactly before overlay apply. Add strict parser/confinement tests before retrying GIO-008.
+- 2026-09-17: GIO-009 normalizes Pi-emitted relative local sources lexically from `$HOME/.pi/agent`, accepts only an exact `gentle-pi` basename that remains within HOME, and retains canonical selected-root asset confinement. Regression RED failed the exact observed jq source; GREEN passed 79 scenarios and 8 aggregate commands (85 passed, 0 failed, 2 explicit corpus skips), static contracts 10/0, consumer gates 7/0, ShellCheck, syntax, and diff checks. Escapes, malformed/control framing, dot/double-slash/trailing forms, wrong basename, conflicts, and both jq/Node paths are covered.
 
 ## Review strategy
 

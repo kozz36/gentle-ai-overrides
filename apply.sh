@@ -156,6 +156,35 @@ pi_package_source_strings() {
   fi
 }
 
+# Normalize the relative local-package form that Pi persists in user settings.
+# Pi resolves the install input first, then stores it relative to $HOME/.pi/agent.
+# This lexical stack deliberately does not follow symlinks; package asset confinement
+# separately resolves the selected root and rejects links inside it before any read.
+pi_normalize_user_local_source_rel() {
+  local source="$1" part result
+  local -a stack=(.pi agent) parts=()
+
+  [[ "$source" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+  case "$source" in
+    ''|/*|.|./*|*/.|*/./*|*//*|*/) return 1 ;;
+  esac
+
+  IFS=/ read -r -a parts <<< "$source"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      ''|.) return 1 ;;
+      ..)
+        [ "${#stack[@]}" -gt 0 ] || return 1
+        unset 'stack[${#stack[@]}-1]'
+        ;;
+      *) stack+=("$part") ;;
+    esac
+  done
+  [ "${#stack[@]}" -gt 0 ] || return 1
+  result="$(IFS=/; printf '%s' "${stack[*]}")"
+  case "$result" in gentle-pi|*/gentle-pi) printf '%s\n' "$result" ;; *) return 1 ;; esac
+}
+
 # Classify one complete JSON-string record emitted by pi_package_source_strings.
 # Canonical supported identities contain no JSON escapes, so matching their complete
 # framed representation is safer than decoding data into shell strings. Invalid
@@ -197,6 +226,20 @@ pi_classify_package_source_record() {
         ;;
     esac
   done
+
+  # Pi stores a user-local package path relative to $HOME/.pi/agent. Decode only
+  # the unescaped safe subset that Pi emits, then require lexical HOME confinement.
+  if [[ "$record" != *'\\'* ]]; then
+    local_rel="${record#\"}"
+    local_rel="${local_rel%\"}"
+    case "$local_rel" in
+      gentle-pi|*/gentle-pi)
+        local_rel="$(pi_normalize_user_local_source_rel "$local_rel")" || return 2
+        printf 'local:%s\n' "$local_rel"
+        return 0
+        ;;
+    esac
+  fi
 
   # An unsupported exact gentle-pi basename (including one with escaped control
   # data or a concatenated suffix) is configuration we must not bypass. Names with

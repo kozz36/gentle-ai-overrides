@@ -348,11 +348,14 @@ Both asset targets are resolved from one recognized gentle-pi package root in
   `~/.pi/agent/git/github.com/Gentleman-Programming/gentle-pi/assets/{agents/sdd-init.md,sdd-orchestrator-workflow.md}`
 - exact npm package `npm:gentle-pi@<version>` (or unprefixed `gentle-pi`) →
   `~/.pi/agent/npm/node_modules/gentle-pi/assets/{agents/sdd-init.md,sdd-orchestrator-workflow.md}`
-- local `path:` or `file:` source lexically beneath `$HOME` and ending in `gentle-pi` →
-  that selected HOME-relative package root. This selection check is lexical; it does not
-  claim that the resolved package root remains physically beneath `$HOME`. After selection,
-  every package asset read and write is confined inside the canonical resolved selected root.
-  Truly lexically external, escaped, or traversal-bearing local paths remain unsupported.
+- local source ending in the exact basename `gentle-pi`: either the legacy `path:` / `file:`
+  form lexically beneath `$HOME`, or Pi's canonical settings form stored relative to
+  `~/.pi/agent` (for example `../../.local/share/gentle-pi-dogfood/3.2.0/gentle-pi`) →
+  that selected HOME-relative package root. Relative segments are normalized lexically from
+  the settings base and must remain within `$HOME`. This selection check does not claim that
+  the resolved package root remains physically beneath `$HOME`; after selection, every package
+  asset read and write is confined inside the canonical resolved selected root. Truly lexically
+  external, escaped, malformed, or HOME-escaping local paths remain unsupported.
 
 Every configured source whose exact package, repository, or local-path basename is
 `gentle-pi` is classified. Any noncanonical GitHub, external/escaping local-path, or otherwise unsupported

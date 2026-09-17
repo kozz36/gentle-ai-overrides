@@ -1138,6 +1138,69 @@ test_pi_local_home_path_source_selects_root() (
   done
 )
 
+test_pi_relative_local_sources_are_confined() (
+  local jq_path node_bin node_path bin parser parser_path source root_rel home backups configured actual label
+  jq_path="$PATH"
+  command -v jq >/dev/null 2>&1 || fail 'jq is required for relative local-source coverage' || exit 1
+  node_bin="$(command -v node)" || fail 'Node is required for relative local-source coverage' || exit 1
+  bin="$TMP_ROOT/pi-relative-local-node-bin"
+  prepare_no_jq_path "$bin" "$node_bin" || fail 'could not create no-jq relative local-source command path' || exit 1
+  node_path="$bin"
+
+  assert_relative_local_source_selects_root() {
+    local parser="$1" parser_path="$2" label="$3" source="$4" root_rel="$5"
+    local home="$TMP_ROOT/pi-relative-local-$parser-$label-home" backups="$TMP_ROOT/pi-relative-local-$parser-$label-backups"
+    local configured actual
+    write_pi_workflow_at "$home/$root_rel/assets/sdd-orchestrator-workflow.md"
+    write_pi_init_at "$home/$root_rel/assets/agents/sdd-init.md"
+    write_pi_package_settings "$home" "{\"packages\":[\"$source\"]}"
+    load_overlay "$home" "$backups"
+    PATH="$parser_path"
+    configured="$(pi_configured_package_kind)" || fail "$parser $label relative source did not classify" || return 1
+    [ "$configured" = "local:$root_rel" ] || fail "$parser $label relative source classified as $configured" || return 1
+    actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail "$parser $label relative source did not resolve" || return 1
+    [ "$actual" = "$root_rel/assets/sdd-orchestrator-workflow.md" ] || fail "$parser $label relative source selected $actual" || return 1
+  }
+
+  for parser in jq node; do
+    case "$parser" in
+      jq) parser_path="$jq_path" ;;
+      node) parser_path="$node_path" ;;
+    esac
+    assert_relative_local_source_selects_root "$parser" "$parser_path" observed \
+      '../../.local/share/gentle-pi-dogfood/3.2.0/gentle-pi' \
+      '.local/share/gentle-pi-dogfood/3.2.0/gentle-pi' || exit 1
+    assert_relative_local_source_selects_root "$parser" "$parser_path" agent-local \
+      'local-packages/gentle-pi' '.pi/agent/local-packages/gentle-pi' || exit 1
+
+    for label in escape external wrong-basename dot double-slash trailing-slash escaped-control; do
+      case "$label" in
+        escape) source='{"packages":["../../../outside/gentle-pi"]}' ;;
+        external) source='{"packages":["/opt/gentle-pi"]}' ;;
+        wrong-basename) source='{"packages":["../../.local/share/gentle-pi-dogfood/3.2.0/not-gentle-pi"]}' ;;
+        dot) source='{"packages":["../../.local/./share/gentle-pi-dogfood/3.2.0/gentle-pi"]}' ;;
+        double-slash) source='{"packages":["../../.local//share/gentle-pi-dogfood/3.2.0/gentle-pi"]}' ;;
+        trailing-slash) source='{"packages":["../../.local/share/gentle-pi-dogfood/3.2.0/gentle-pi/"]}' ;;
+        escaped-control) source='{"packages":["../../.local/share/gentle-pi-dogfood/3.2.0/gentle-pi\\u000a"]}' ;;
+      esac
+      assert_pi_framed_source_fails_closed_before_writes "$parser" "$parser_path" "relative-$label" "$source" || exit 1
+    done
+    assert_pi_framed_source_fails_closed_before_writes "$parser" "$parser_path" relative-conflict \
+      '{"packages":["../../.local/share/gentle-pi-dogfood/3.2.0/gentle-pi","npm:gentle-pi@9.9.9"]}' || exit 1
+  done
+
+  home="$TMP_ROOT/pi-relative-local-helper-home"
+  backups="$TMP_ROOT/pi-relative-local-helper-backups"
+  prepare_pi_package_home "$home"
+  write_pi_workflow_at "$home/$PI_NPM_WORKFLOW_REL"
+  write_pi_package_settings "$home" '{"packages":["local-packages/gentle-pi-helper"]}'
+  load_overlay "$home" "$backups"
+  PATH="$jq_path"
+  expect_rc 1 pi_configured_package_kind || exit 1
+  actual="$(resolve_target_rel pi "$PI_WORKFLOW_PLACEHOLDER")" || fail 'relative helper source blocked unique npm fallback' || exit 1
+  [ "$actual" = "$PI_NPM_WORKFLOW_REL" ] || fail 'relative helper source selected the wrong root' || exit 1
+)
+
 test_pi_unrelated_helper_does_not_block_unique_npm_layout() (
   local home="$TMP_ROOT/pi-helper-home" backups="$TMP_ROOT/pi-helper-backups" actual
   prepare_pi_package_home "$home"
@@ -3460,6 +3523,7 @@ run test_pi_unsupported_configured_source_fails
 run test_pi_unrecognized_git_identity_fails_closed_before_fallback
 run test_pi_local_path_identity_fails_closed_before_fallback
 run test_pi_local_home_path_source_selects_root
+run test_pi_relative_local_sources_are_confined
 run test_pi_unrelated_helper_does_not_block_unique_npm_layout
 run test_pi_canonical_github_forms_select_git
 # Restored HEAD consumer and host-row scenarios retain their original assertions.
