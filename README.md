@@ -21,15 +21,20 @@ For private Pi maintenance, the [candidate composer CLI](composer/README.md) pro
 a deterministic candidate bundle and plan from explicit pinned inputs. It does **not**
 install, apply, or authorize changes, and it does not discover native ownership.
 
-Four private candidate-generation and confirmation replay probes passed on Python
+The immutable v1 profile preserves the historical fourteen-target contract. Four
+private candidate-generation and confirmation replay probes passed on Python
 3.9.25 and 3.14.7, normal and `-O`, reproducing all fourteen approved Pi postimages
 from fourteen pinned `gentle-pi` 2.7.0 source assets and a user-approved profile.
 The CodeGraph and MCP blocks match the Gentle AI 2.9.1 generator; the init block
 matches the historical overlay revision below. This is replay verification only,
-not installation authority or a native ownership claim. The
-replay's historical overlay input was `v2.6.0-overlay.3` at revision
-`6cd8caee2c8ab7a8d3121e1f513e6cacc41d2b98`; it is provenance only. Release identity
-is defined by the Git tag.
+not installation authority or a native ownership claim. The replay's historical
+overlay input was `v2.6.0-overlay.3` at revision
+`6cd8caee2c8ab7a8d3121e1f513e6cacc41d2b98`; it is provenance only.
+
+The v2 profile models the same fourteen targets plus the four package-owned Pi policy
+surfaces used by the `gentle-init` transaction. It binds Gentle AI `3.1.0`,
+`gentle-pi` `3.2.0`, and overlay `3.2.0-overlay.1`; optional delegation absence is
+explicit and creates no file. Release identity is defined by the Git tag.
 
 The existing legacy eight-agent [`apply.sh`](apply.sh) installer below is a separate
 overlay workflow. Its documented installation instructions remain the path for that
@@ -333,8 +338,8 @@ an unchanged participant that concurrently drifts is identified as such and is n
 labeled `backup-only`. This is a handled-operation guarantee, not crash or power-loss
 atomicity: there is no journal or recovery promise after process death.
 `gentle-init` is a read-only candidate author; the parent owns materialization,
-checksum-bound approval, exact publication, and readback. The composer remains
-deferred and does not authorize this migration.
+checksum-bound approval, exact publication, and readback. Composer v2 now models
+this migration as pinned candidate evidence, but does not authorize or apply it.
 
 Both asset targets are resolved from one recognized gentle-pi package root in
 `~/.pi/agent/settings.json` (`packages` entries may be strings or objects with a

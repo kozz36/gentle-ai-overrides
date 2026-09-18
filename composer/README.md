@@ -2,9 +2,18 @@
 
 **Candidate-only implementation:** Python 3.9+ standard library on POSIX. No LLM,
 network, installer, native ownership discovery, or live application is invoked.
-An actual CLI replay reproduced all fourteen approved maintenance outputs from
-pinned sources and private snapshots. This does not certify future upstream
-versions, fresh native ownership, or an installed SDD runtime.
+The composer selects one exact inventory from the pinned bundle schema:
+
+| Schema | Inventory | Release provenance |
+| --- | --- | --- |
+| `deterministic-assets/v1` | Historical 14-target SDD contract | Bundle-supplied historical versions |
+| `deterministic-assets/v2` | 18 targets, with optional delegation allowed absent | Gentle AI `3.1.0`, `gentle-pi` `3.2.0`, overlay `3.2.0-overlay.1` |
+
+An actual v1 CLI replay reproduced all fourteen approved maintenance outputs from
+pinned sources and private snapshots. V2 extends that evidence pipeline to the four
+package-owned policy surfaces without granting installation or approval authority.
+Neither profile certifies future upstream versions, fresh native ownership, or an
+installed SDD runtime.
 
 ## Run
 
@@ -20,7 +29,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m composer \
 
 Set those variables explicitly. `--claims-home` is required: it is a supplied,
 read-only evidence root, never fallback discovery of an installed or home path.
-Its fourteen captured entries must exactly match `--installed`'s validated
+Its schema-selected captured entries must exactly match `--installed`'s validated
 `state.json` entries before any output exists. On systems where `/tmp` is a
 symlink, use its physical path. `--baseline` is optional: without it, matching
 content needs no write, but any proposed update is blocked. No baseline is
@@ -42,13 +51,14 @@ The complete synthetic example is `tests/test_composer_bundle.py:fixture`.
 It is test data, not an approved production profile. Production bundles and
 snapshots must remain private; do not commit raw HOME configuration or secrets.
 
-- `bundle.json`: schema `deterministic-assets/v1`; `versions` names `gentle_ai`,
-  `gentle_pi`, and `overlay`; `overlay_revision` is a full commit identifier;
-  `rules` selects `pi-init-before-memory/v1` and `pi-agent-preferences/v1`.
-- `blocks`: maps `init`, `codegraph`, and `mcp` to SHA-256 pins for
-  `blocks/<name>.md`. Supply complete, individually wrapped managed blocks.
-- `assets`: exactly the fourteen keys listed by `composer.bundle.TARGETS`.
-  Each entry has `source_sha256` for `sources/<target>` and `preferences`.
+- `bundle.json`: schema is `deterministic-assets/v1` or
+  `deterministic-assets/v2`; `versions` names `gentle_ai`, `gentle_pi`, and
+  `overlay`; `overlay_revision` is a full commit identifier. V2 requires the
+  exact release versions shown above. Each schema requires its exact versioned
+  `rules` and `blocks` contract; every block is individually SHA-256 pinned.
+- `assets`: exactly the keys in the selected immutable profile. Each present entry
+  has `source_sha256` for `sources/<target>` and `preferences`. Only v2 delegation
+  may be null; null records explicit absence and creates no candidate file.
 - Agent preferences contain `expected_source_tools`, `model`, `thinking`, `mcp`.
   Supply twelve confirmed routing pairs; research has null model/thinking.
   `expected_source_tools` is the previously confirmed contract, not a list to
@@ -57,11 +67,13 @@ snapshots must remain private; do not commit raw HOME configuration or secrets.
   managed CodeGraph source blocks are rejected. Hashes prove local integrity,
   not upstream authenticity; version labels do not establish provenance alone.
 
-The installed and optional baseline roots use `state.json`, schema
-`asset-snapshot/v1`, with `entries` covering the same fourteen targets. An entry
-is null only when its file is absent; otherwise it contains `sha256`, `ownership`,
-and `tools`, with bytes at `<target>`. Ownership is `user-owned`, `managed`, or
-`unknown`; tools are an exact list for agents and null for the chain. Content
+The installed and optional baseline roots use `state.json`. V1 requires
+`asset-snapshot/v1`; v2 requires `asset-snapshot/v2` plus matching
+`profileSchema`. Entries cover the selected profile's complete inventory, including
+an explicit null for absent optional delegation. Other entries are null only when
+that target is absent, or contain `sha256`, `ownership`, and `tools`, with bytes at
+`<target>`. Ownership is `user-owned`, `managed`, or `unknown`; tools are an exact
+list for agents and null for package assets and the chain. Content
 hashes and tool metadata are checked. Ownership labels and prior approval are
 supplied observations, not independently discovered native authority. Use a
 genuinely verified prior snapshot as baseline.
@@ -70,8 +82,10 @@ genuinely verified prior snapshot as baseline.
 
 `--claims-home` is a required explicit descriptor-anchored `Root`. The CLI takes
 its declared ownership from each installed entry; an absent installed target is
-explicitly `unknown`, never `managed`. It sequentially captures the same fourteen
-targets, then reads `gentle-ai/managed-assets.json`. This root is evidence only:
+explicitly `unknown`, never `managed`. It sequentially captures the selected
+profile's complete inventory, then reads `gentle-ai/managed-assets.json`. Historical
+v1 evidence records package version `2.7.0`; v2 evidence records `3.2.0`, and the
+serializer rejects cross-profile versions. This root is evidence only:
 it does not need a live installation and grants neither ownership nor authority.
 
 The plan preserves two different pins. `installed_snapshot_sha256` hashes the
