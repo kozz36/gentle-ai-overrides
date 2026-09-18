@@ -1,4 +1,5 @@
 """Pure candidate transforms for Pi workflow and optional ODD forwarding."""
+from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
