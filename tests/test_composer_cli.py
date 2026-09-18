@@ -164,6 +164,21 @@ class CliTests(unittest.TestCase):
             compose(args)
         self.assertFalse((self.base / "v2-desired-output").exists())
 
+    def test_v2_rejects_malformed_optional_absence_before_membership_checks(self):
+        from composer.__main__ import compose
+        candidates, inputs, _ = self.v2_inputs("v2-absence-shape", delegation=True)
+        args = SimpleNamespace(input=inputs["input"], manifest_sha256=inputs["manifest-sha256"],
+                               installed=inputs["installed"], claims_home=inputs["claims-home"],
+                               baseline=inputs["baseline"], output=str(self.base / "v2-absence-shape-output"))
+        metadata = {"schema": V2_PROFILE.schema, "versions": {}, "overlay_revision": "a" * 40,
+                    "rules": {}, "manifest_sha256": "a" * 64, "block_sha256": {}}
+        for malformed in (None, (), "", {}):
+            with self.subTest(malformed=malformed), mock.patch(
+                    "composer.__main__.compose_bundle",
+                    return_value=(dict(metadata, optional_absent=malformed), candidates)), self.assertRaises(BundleError):
+                compose(args)
+        self.assertFalse((self.base / "v2-absence-shape-output").exists())
+
     def test_claims_home_is_required(self):
         output = self.base / "output"
         command = [sys.executable, "-m", "composer", "--input", str(self.bundle),

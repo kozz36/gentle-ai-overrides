@@ -66,10 +66,11 @@ def _compose(args):
             provenance_keys.add("optional_absent")
         require_keys(metadata, provenance_keys)
         optional_absent = [] if profile is V1_PROFILE else metadata["optional_absent"]
+        if type(optional_absent) is not list:
+            raise BundleError("optional absence differs from selected candidate inventory")
         present = tuple(target for target in profile.targets if target not in optional_absent)
-        if (type(optional_absent) is not list
-                or optional_absent != [target for target in profile.optional_targets
-                                       if target not in candidates]):
+        if optional_absent != [target for target in profile.optional_targets
+                              if target not in candidates]:
             raise BundleError("optional absence differs from selected candidate inventory")
         require_keys(candidates, present)
         for target in present:
